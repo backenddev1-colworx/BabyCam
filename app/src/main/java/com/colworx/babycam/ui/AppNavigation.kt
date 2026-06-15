@@ -90,7 +90,7 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
             )
         }
         composable(Routes.PERMISSIONS) {
-            PermissionsScreen(onContinue = {
+            PermissionsScreen(role = pendingRole, onContinue = {
                 if (pendingRole == Role.BABY) {
                     nav.navigate(Routes.BATTERY)
                 } else {
@@ -157,7 +157,15 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(onBack = { nav.popBackStack() })
+            SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onForgetPairing = {
+                    scope.launch { prefs.clearParentRoom() }
+                    nav.navigate(Routes.PARENT_SCAN) {
+                        popUpTo(Routes.PARENT_LIVE) { inclusive = true }
+                    }
+                }
+            )
         }
     }
 }

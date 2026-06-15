@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.BatteryStd
 import androidx.compose.material.icons.outlined.CallEnd
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.ChildCare
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.DarkMode
@@ -590,7 +591,7 @@ private fun SoundRow(
 // 4) Settings screen ---------------------------------------------------------
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit = {}) {
+fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = null) {
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
     val pinManager = remember { PinManager(context) }
@@ -602,12 +603,55 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
 
     var showPinDialog by remember { mutableStateOf(false) }
     var newPin by remember { mutableStateOf("") }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showForgetDialog by remember { mutableStateOf(false) }
 
     val savedSens by prefs.crySensitivity.collectAsState(initial = 0.55f)
     val savedDataSaver by prefs.dataSaver.collectAsState(initial = false)
     val lockEnabled by pinManager.isEnabled.collectAsState(initial = false)
+    val savedRoom by prefs.parentRoom.collectAsState(initial = null)
     LaunchedEffect(savedSens) { crySensitivity = savedSens }
     LaunchedEffect(savedDataSaver) { dataSaver = savedDataSaver }
+
+    if (showAboutDialog) {
+        AlertDialog(
+            onDismissRequest = { showAboutDialog = false },
+            title = { Text("About BabyCam") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Version 1.0", style = MaterialTheme.typography.bodyMedium, color = Indigo900)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Free, open-source baby monitor. No accounts, no subscriptions. " +
+                        "Live video, two-way audio, cry alerts, and lullabies — all on your own phones.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Muted
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAboutDialog = false }) { Text("Close") }
+            }
+        )
+    }
+
+    if (showForgetDialog) {
+        AlertDialog(
+            onDismissRequest = { showForgetDialog = false },
+            title = { Text("Forget pairing?") },
+            text = { Text("This will remove the saved pairing. You will need to enter a new code to reconnect.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showForgetDialog = false
+                    scope.launch { prefs.clearParentRoom() }
+                    onForgetPairing?.invoke()
+                }) { Text("Forget", color = Color(0xFFFF6B6B)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForgetDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     if (showPinDialog) {
         AlertDialog(
@@ -705,23 +749,49 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
         Spacer(Modifier.height(12.dp))
 
         AppCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onBack),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "About BabyCam",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Indigo900,
-                    modifier = Modifier.weight(1f)
-                )
-                Icon(
-                    imageVector = Icons.Outlined.ChevronRight,
-                    contentDescription = null,
-                    tint = IndigoDeep
-                )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAboutDialog = true },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "About BabyCam",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Indigo900,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.ChevronRight,
+                        contentDescription = null,
+                        tint = IndigoDeep
+                    )
+                }
+
+                if (onForgetPairing != null && savedRoom != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showForgetDialog = true },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.LinkOff,
+                            contentDescription = null,
+                            tint = Color(0xFFFF6B6B),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Forget pairing",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color(0xFFFF6B6B),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
             }
         }
     }

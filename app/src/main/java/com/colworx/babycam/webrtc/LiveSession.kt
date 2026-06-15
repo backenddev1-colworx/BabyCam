@@ -77,7 +77,10 @@ object LiveSession {
         connection?.setTorch(on)
     }
 
-    fun setVideoEnabled(enabled: Boolean) = connection?.setVideoEnabled(enabled) ?: Unit
+    fun setVideoEnabled(enabled: Boolean) {
+        babyCamEnabled.value = enabled
+        connection?.setVideoEnabled(enabled)
+    }
 
     /** Baby: publish a cry alert to the paired parent. */
     fun sendCry() = connection?.sendCry() ?: Unit

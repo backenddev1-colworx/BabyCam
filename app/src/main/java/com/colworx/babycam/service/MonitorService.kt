@@ -22,7 +22,9 @@ import androidx.core.app.ServiceCompat
 import com.colworx.babycam.MainActivity
 import com.colworx.babycam.audio.CryDetector
 import com.colworx.babycam.audio.Sensitivity
+import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.webrtc.LiveSession
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,10 +89,17 @@ class MonitorService : Service() {
         }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED } ?: return
         audioRecord = ar
 
-        val detector = CryDetector(Sensitivity.MEDIUM)
         val frame = ShortArray(bufferSize / 2)
 
         audioJob = scope.launch {
+            // Read sensitivity from DataStore; map 0.0-1.0 float → Sensitivity enum.
+            val sensitivityFloat = AppPreferences(applicationContext).crySensitivity.first()
+            val detectorSens = when {
+                sensitivityFloat < 0.33f -> Sensitivity.LOW
+                sensitivityFloat < 0.66f -> Sensitivity.MEDIUM
+                else -> Sensitivity.HIGH
+            }
+            val detector = CryDetector(detectorSens)
             ar.startRecording()
             while (isActive) {
                 val read = ar.read(frame, 0, frame.size)

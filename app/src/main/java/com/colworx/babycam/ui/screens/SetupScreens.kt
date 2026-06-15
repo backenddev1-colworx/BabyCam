@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.colworx.babycam.data.Role
 import com.colworx.babycam.ui.components.AppCard
 import com.colworx.babycam.ui.components.PrimaryButton
 import com.colworx.babycam.ui.components.SecondaryButton
@@ -60,13 +62,15 @@ private fun isGranted(context: android.content.Context, permission: String): Boo
         android.content.pm.PackageManager.PERMISSION_GRANTED
 
 @Composable
-fun PermissionsScreen(onContinue: () -> Unit) {
+fun PermissionsScreen(role: Role = Role.NONE, onContinue: () -> Unit) {
     val context = LocalContext.current
 
+    // Camera is only needed for the baby unit (the parent only receives video).
+    val needsCamera = role != Role.PARENT
     val notificationsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
     var cameraGranted by remember {
-        mutableStateOf(isGranted(context, Manifest.permission.CAMERA))
+        mutableStateOf(if (needsCamera) isGranted(context, Manifest.permission.CAMERA) else true)
     }
     var micGranted by remember {
         mutableStateOf(isGranted(context, Manifest.permission.RECORD_AUDIO))
@@ -82,14 +86,14 @@ fun PermissionsScreen(onContinue: () -> Unit) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        result[Manifest.permission.CAMERA]?.let { cameraGranted = it }
+        if (needsCamera) result[Manifest.permission.CAMERA]?.let { cameraGranted = it }
         result[Manifest.permission.RECORD_AUDIO]?.let { micGranted = it }
         if (notificationsSupported) {
             result[Manifest.permission.POST_NOTIFICATIONS]?.let { notificationsGranted = it }
         }
-        if (cameraGranted && micGranted) {
-            onContinue()
-        }
+        // Core requirements: camera (baby only) + mic
+        val coreOk = (if (needsCamera) cameraGranted else true) && micGranted
+        if (coreOk) onContinue()
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -97,6 +101,7 @@ fun PermissionsScreen(onContinue: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                .safeDrawingPadding()
                 .padding(24.dp)
         ) {
             Text(
@@ -112,17 +117,19 @@ fun PermissionsScreen(onContinue: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(24.dp))
 
-            PermissionRow(
-                icon = Icons.Outlined.PhotoCamera,
-                label = "Camera",
-                description = "See your baby in live video",
-                granted = cameraGranted
-            )
-            Spacer(modifier = Modifier.height(12.dp))
+            if (needsCamera) {
+                PermissionRow(
+                    icon = Icons.Outlined.PhotoCamera,
+                    label = "Camera",
+                    description = "See your baby in live video",
+                    granted = cameraGranted
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
             PermissionRow(
                 icon = Icons.Outlined.Mic,
                 label = "Microphone",
-                description = "Hear sounds and cries",
+                description = if (role == Role.PARENT) "Talk to your baby" else "Hear sounds and cries",
                 granted = micGranted
             )
             Spacer(modifier = Modifier.height(12.dp))
@@ -139,13 +146,14 @@ fun PermissionsScreen(onContinue: () -> Unit) {
                 text = "Allow & continue",
                 onClick = {
                     val toRequest = mutableListOf<String>()
-                    if (!cameraGranted) toRequest.add(Manifest.permission.CAMERA)
+                    if (needsCamera && !cameraGranted) toRequest.add(Manifest.permission.CAMERA)
                     if (!micGranted) toRequest.add(Manifest.permission.RECORD_AUDIO)
                     if (notificationsSupported && !notificationsGranted) {
                         toRequest.add(Manifest.permission.POST_NOTIFICATIONS)
                     }
                     if (toRequest.isEmpty()) {
-                        if (cameraGranted && micGranted) onContinue()
+                        val coreOk = (if (needsCamera) cameraGranted else true) && micGranted
+                        if (coreOk) onContinue()
                     } else {
                         launcher.launch(toRequest.toTypedArray())
                     }
@@ -249,6 +257,7 @@ fun BatterySetupScreen(onDone: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                .safeDrawingPadding()
                 .padding(24.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
