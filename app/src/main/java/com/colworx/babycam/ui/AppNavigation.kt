@@ -144,6 +144,7 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                 nav.navigate(Routes.PARENT_LIVE)
             })
         }
+
         composable(Routes.PARENT_LIVE) {
             ParentLiveScreen(onSettings = { nav.navigate(Routes.SETTINGS) })
         }

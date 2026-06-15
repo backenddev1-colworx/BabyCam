@@ -1,5 +1,6 @@
 package com.colworx.babycam.signaling
 
+import android.util.Log
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.MqttCallback
 import org.eclipse.paho.client.mqttv3.MqttClient
@@ -72,10 +73,12 @@ class SignalingClient(
         Thread {
             try {
                 val clientId = "babycam-$selfId-${System.currentTimeMillis()}"
+                Log.d(TAG, "Connecting to $brokerUrl, topic=$topic, clientId=$clientId")
                 val mqtt = MqttClient(brokerUrl, clientId, MemoryPersistence())
 
                 mqtt.setCallback(object : MqttCallback {
                     override fun connectionLost(cause: Throwable?) {
+                        Log.w(TAG, "Connection lost: ${cause?.message}")
                         onState(false)
                     }
 
@@ -84,6 +87,7 @@ class SignalingClient(
                         val plain = try {
                             SignalCrypto.decrypt(key, String(raw, Charsets.UTF_8))
                         } catch (e: Exception) {
+                            Log.w(TAG, "Decrypt failed: ${e.message}")
                             ""
                         }
                         if (plain.isEmpty()) return
@@ -95,32 +99,33 @@ class SignalingClient(
                         }
 
                         val from = json.optString("from")
-                        // Ignore our own broadcasts.
                         if (from == selfId) return
 
                         val type = json.optString("type")
                         if (type.isEmpty()) return
                         val payload = json.optString("payload")
+                        Log.d(TAG, "Received [$type] from $from")
 
                         onMessage(SignalMessage(type = type, from = from, payload = payload))
                     }
 
-                    override fun deliveryComplete(token: IMqttDeliveryToken?) {
-                        // No-op.
-                    }
+                    override fun deliveryComplete(token: IMqttDeliveryToken?) {}
                 })
 
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     isAutomaticReconnect = true
                     keepAliveInterval = 30
+                    connectionTimeout = 15
                 }
 
                 mqtt.connect(options)
                 mqtt.subscribe(topic, 1)
                 client = mqtt
+                Log.d(TAG, "Connected and subscribed to $topic")
                 onState(true)
             } catch (e: Exception) {
+                Log.e(TAG, "MQTT connect failed: ${e.javaClass.simpleName}: ${e.message}")
                 onState(false)
             }
         }.start()
@@ -132,7 +137,7 @@ class SignalingClient(
      * @param type one of `offer`, `answer`, `ice`, `event`.
      * @param payload opaque string payload.
      */
-    fun send(type: String, payload: String) {
+    fun send(type: String, payload: String, retained: Boolean = false) {
         try {
             val json = JSONObject().apply {
                 put("type", type)
@@ -140,11 +145,19 @@ class SignalingClient(
                 put("payload", payload)
             }
             val encrypted = SignalCrypto.encrypt(key, json.toString())
-            val message = MqttMessage(encrypted.toByteArray(Charsets.UTF_8)).apply { qos = 1 }
+            val message = MqttMessage(encrypted.toByteArray(Charsets.UTF_8)).apply {
+                qos = 1
+                isRetained = retained
+            }
             client?.publish(topic, message)
+            Log.d(TAG, "Sent [$type] retained=$retained")
         } catch (e: Exception) {
-            // Drop the message if not connected / publish fails.
+            Log.e(TAG, "Send [$type] failed: ${e.message}")
         }
+    }
+
+    companion object {
+        private const val TAG = "BabyCam"
     }
 
     /** Disconnects and releases the MQTT client. */

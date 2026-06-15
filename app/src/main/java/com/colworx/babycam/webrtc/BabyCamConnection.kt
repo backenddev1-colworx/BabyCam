@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.util.Log
 import com.colworx.babycam.audio.LullabyPlayer
 import com.colworx.babycam.service.CryNotifier
 import com.colworx.babycam.signaling.SignalMessage
@@ -62,9 +63,23 @@ class BabyCamConnection(
             }
             signaling.connect(room, ::onSignal) { up ->
                 onSignalingUp(up)
-                if (up && role == ConnRole.BABY) {
-                    session.createOffer { sdp -> signaling.send("offer", sdp.description) }
-                    registerBatteryReceiver()
+                Log.d(TAG, "Signaling ${if (up) "UP" else "DOWN"}, role=$role")
+                if (up) {
+                    when (role) {
+                        ConnRole.BABY -> {
+                            // Send retained offer so late-subscribing parent gets it immediately
+                            session.createOffer { sdp ->
+                                Log.d(TAG, "Baby: initial offer created")
+                                signaling.send("offer", sdp.description, retained = true)
+                            }
+                            registerBatteryReceiver()
+                        }
+                        ConnRole.PARENT -> {
+                            // Tell baby we're ready — baby will re-create a fresh offer+ICE
+                            signaling.send("ping", "")
+                            Log.d(TAG, "Parent: sent ping to baby")
+                        }
+                    }
                 }
             }
         }
@@ -93,11 +108,23 @@ class BabyCamConnection(
 
     private fun onSignal(msg: SignalMessage) {
         when (msg.type) {
+            "ping" -> if (role == ConnRole.BABY) {
+                Log.d(TAG, "Baby: got ping, re-offering with fresh ICE")
+                session.createOffer { sdp ->
+                    Log.d(TAG, "Baby: fresh offer created for parent")
+                    signaling.send("offer", sdp.description, retained = true)
+                }
+            }
             "offer" -> if (role == ConnRole.PARENT) {
+                Log.d(TAG, "Parent: received offer, creating answer")
                 session.setRemoteDescription(SessionDescription(SessionDescription.Type.OFFER, msg.payload))
-                session.createAnswer { sdp -> signaling.send("answer", sdp.description) }
+                session.createAnswer { sdp ->
+                    Log.d(TAG, "Parent: answer created")
+                    signaling.send("answer", sdp.description)
+                }
             }
             "answer" -> if (role == ConnRole.BABY) {
+                Log.d(TAG, "Baby: received answer")
                 session.setRemoteDescription(SessionDescription(SessionDescription.Type.ANSWER, msg.payload))
             }
             "ice" -> parseIce(msg.payload)?.let { session.addRemoteIceCandidate(it) }
@@ -200,4 +227,8 @@ class BabyCamConnection(
         val o = JSONObject(payload)
         IceCandidate(o.getString("sdpMid"), o.getInt("sdpMLineIndex"), o.getString("candidate"))
     } catch (_: Exception) { null }
+
+    companion object {
+        private const val TAG = "BabyCam"
+    }
 }

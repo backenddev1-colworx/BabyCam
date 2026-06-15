@@ -28,9 +28,10 @@ import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.WifiOff
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,7 +41,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -52,12 +52,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
 import android.widget.Toast
@@ -82,25 +89,22 @@ import com.colworx.babycam.ui.theme.NightSurface
 import com.colworx.babycam.ui.theme.NightText
 import com.colworx.babycam.webrtc.LiveSession
 import com.colworx.babycam.webrtc.VideoRenderer
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 
 // 1) Parent scan screen ------------------------------------------------------
 
 @Composable
-fun ParentScanScreen(onScanned: (String) -> Unit = {}, onManual: () -> Unit = {}) {
-    val launcher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val token = result.contents
-        if (token != null && RoomToken.isValid(token)) onScanned(token)
+fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
+    var code by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    // Auto-submit when 4 digits entered
+    LaunchedEffect(code) {
+        if (code.length == 4 && RoomToken.isValid(code)) onScanned(code)
     }
-    val options = ScanOptions().apply {
-        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-        setPrompt("Scan the baby phone's code")
-        setBeepEnabled(false)
-        setOrientationLocked(false)
-    }
-    LaunchedEffect(Unit) { launcher.launch(options) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -110,67 +114,69 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}, onManual: () -> Unit = {}
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Scan baby's code",
+            text = "Enter pairing code",
             style = MaterialTheme.typography.titleLarge,
             color = Color.White
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Point at the baby phone",
+            text = "4-digit code shown on baby phone",
             style = MaterialTheme.typography.bodyMedium,
             color = NightText
         )
-        Spacer(Modifier.height(32.dp))
-        Box(
+        Spacer(Modifier.height(40.dp))
+
+        // Hidden text field drives the OTP boxes
+        BasicTextField(
+            value = code,
+            onValueChange = { v ->
+                val digits = v.filter { it.isDigit() }.take(4)
+                code = digits
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            cursorBrush = SolidColor(Color.Transparent),
+            textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
             modifier = Modifier
-                .size(240.dp)
-                .background(NightSurface, RoundedCornerShape(16.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier.size(150.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                // 4 corner brackets
-                CornerBracket(Modifier.align(Alignment.TopStart), top = true, start = true)
-                CornerBracket(Modifier.align(Alignment.TopEnd), top = true, start = false)
-                CornerBracket(Modifier.align(Alignment.BottomStart), top = false, start = true)
-                CornerBracket(Modifier.align(Alignment.BottomEnd), top = false, start = false)
-                Icon(
-                    imageVector = Icons.Outlined.QrCode2,
-                    contentDescription = null,
-                    modifier = Modifier.size(60.dp),
-                    tint = Color(0xFF3A3658)
-                )
+                .size(1.dp)
+                .focusRequester(focusRequester)
+        )
+
+        // 4 digit boxes
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            repeat(4) { i ->
+                val digit = code.getOrNull(i)?.toString() ?: ""
+                val filled = i < code.length
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (filled) IndigoDeep else NightSurface)
+                        .border(
+                            width = 2.dp,
+                            color = if (filled) IndigoDeep else Color(0xFF2C2850),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        .clickable { focusRequester.requestFocus() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = digit,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(20.dp))
+
+        Spacer(Modifier.height(32.dp))
         Text(
-            text = "Auto-detects the code",
+            text = "Tap a box if keyboard doesn't open",
             style = MaterialTheme.typography.labelSmall,
             color = NightText
         )
-        Spacer(Modifier.height(24.dp))
-        PrimaryButton(text = "Open scanner", onClick = { launcher.launch(options) })
     }
-}
-
-@Composable
-private fun CornerBracket(modifier: Modifier, top: Boolean, start: Boolean) {
-    Box(
-        modifier = modifier
-            .size(28.dp)
-            .border(
-                width = 3.dp,
-                color = com.colworx.babycam.ui.theme.Indigo,
-                shape = RoundedCornerShape(
-                    topStart = if (top && start) 8.dp else 0.dp,
-                    topEnd = if (top && !start) 8.dp else 0.dp,
-                    bottomStart = if (!top && start) 8.dp else 0.dp,
-                    bottomEnd = if (!top && !start) 8.dp else 0.dp
-                )
-            )
-    )
 }
 
 // 2) Parent live screen ------------------------------------------------------

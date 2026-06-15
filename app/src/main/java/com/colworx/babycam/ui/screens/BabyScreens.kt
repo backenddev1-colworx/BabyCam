@@ -19,7 +19,6 @@ import androidx.compose.material.icons.outlined.Hearing
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.foundation.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -31,11 +30,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.colworx.babycam.signaling.QrCodes
+import androidx.compose.ui.unit.sp
 import com.colworx.babycam.ui.components.AppCard
 import com.colworx.babycam.ui.components.PrimaryButton
 import com.colworx.babycam.ui.components.SecondaryButton
@@ -59,7 +58,6 @@ fun BabyPairingScreen(
     onContinue: () -> Unit = {},
     onCancel: () -> Unit = {}
 ) {
-    val qrBitmap = remember(room) { QrCodes.encodeToBitmap(room, 600) }
     val signalingUp by LiveSession.signalingUp
     val statusText = if (signalingUp) "Waiting for parent…" else "Connecting…"
     Column(
@@ -78,26 +76,37 @@ fun BabyPairingScreen(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Scan this on the parent phone",
+            text = "Enter this code on the parent phone",
             style = MaterialTheme.typography.bodyMedium,
             color = Muted,
             textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(20.dp))
-        Box(
-            modifier = Modifier
-                .size(170.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color.White),
-            contentAlignment = Alignment.Center
+        Spacer(modifier = Modifier.height(28.dp))
+
+        // 4-digit code display
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Image(
-                bitmap = qrBitmap.asImageBitmap(),
-                contentDescription = "Pairing QR code",
-                modifier = Modifier.size(150.dp)
-            )
+            room.forEach { digit ->
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = digit.toString(),
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Indigo900
+                    )
+                }
+            }
         }
-        Spacer(modifier = Modifier.height(20.dp))
+
+        Spacer(modifier = Modifier.height(24.dp))
         StatusPill(
             text = statusText,
             bg = Color(0xFFFAEEDA),
@@ -110,7 +119,7 @@ fun BabyPairingScreen(
             color = Muted,
             textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(24.dp))
         PrimaryButton(
             text = "Go to monitor",
             onClick = onContinue,
