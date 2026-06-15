@@ -24,15 +24,15 @@ Firebase Cloud Messaging, ZXing, Android Foreground Service + BootReceiver.
 
 **Outcome:** An empty Compose app builds to a debug APK and installs/runs on the phone.
 
-- [ ] **0.1** Install JDK 17 (`brew install openjdk@17`) and set `JAVA_HOME`.
-- [ ] **0.2** Install Android command-line tools (`brew install --cask android-commandlinetools`),
+- [x] **0.1** Install JDK 17 (`brew install openjdk@17`) and set `JAVA_HOME`.
+- [x] **0.2** Install Android command-line tools (`brew install --cask android-commandlinetools`),
       then `sdkmanager` for `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`.
-- [ ] **0.3** Accept SDK licenses (`sdkmanager --licenses`). Create `local.properties` with
+- [x] **0.3** Accept SDK licenses (`sdkmanager --licenses`). Create `local.properties` with
       `sdk.dir`.
-- [ ] **0.4** Scaffold a Gradle Android project: `app/` module, Kotlin DSL, Compose, min SDK 26,
+- [x] **0.4** Scaffold a Gradle Android project: `app/` module, Kotlin DSL, Compose, min SDK 26,
       target SDK 35. Package `com.colworx.babycam`.
-- [ ] **0.5** Add base dependencies (Compose BOM, Material3, Navigation-Compose, lifecycle).
-- [ ] **0.6** Build: `./gradlew assembleDebug` → APK at `app/build/outputs/apk/debug/`.
+- [x] **0.5** Add base dependencies (Compose BOM, Material3, Navigation-Compose, lifecycle).
+- [ ] **0.6** Build: `./gradlew assembleDebug` → APK at `app/build/outputs/apk/debug/` (building…).
 - [ ] **0.7** Verify on device: `adb install -r` the APK, launch, see a "Hello BabyCam" screen.
 - [ ] **0.8** Commit scaffold.
 

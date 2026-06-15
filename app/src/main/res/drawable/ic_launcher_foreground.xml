@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- camera body -->
+    <path
+        android:fillColor="#534AB7"
+        android:pathData="M34,44 m0,8 a8,8 0 0 1 8,-8 h24 a8,8 0 0 1 8,8 v20 a8,8 0 0 1 -8,8 h-24 a8,8 0 0 1 -8,-8 z" />
+    <!-- lens -->
+    <path
+        android:fillColor="#EEEDFE"
+        android:pathData="M54,62 m-9,0 a9,9 0 1 0 18,0 a9,9 0 1 0 -18,0" />
+    <path
+        android:fillColor="#534AB7"
+        android:pathData="M54,62 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0" />
+    <!-- heart on top -->
+    <path
+        android:fillColor="#D4537E"
+        android:pathData="M54,42 c-2,-4 -8,-4 -8,1 c0,3 4,6 8,9 c4,-3 8,-6 8,-9 c0,-5 -6,-5 -8,-1 z" />
+</vector>
