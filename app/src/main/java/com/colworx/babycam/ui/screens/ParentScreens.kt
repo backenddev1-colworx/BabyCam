@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -164,8 +165,14 @@ fun ParentLiveScreen(
     onSnapshot: () -> Unit = {}
 ) {
     val track by LiveSession.remoteVideo
+    val connState by LiveSession.connState
     val connection = LiveSession.connection
     var talking by remember { mutableStateOf(false) }
+
+    val isDisconnected = connState == org.webrtc.PeerConnection.IceConnectionState.FAILED ||
+        connState == org.webrtc.PeerConnection.IceConnectionState.DISCONNECTED ||
+        connState == org.webrtc.PeerConnection.IceConnectionState.CLOSED
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -178,7 +185,6 @@ fun ParentLiveScreen(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            // Placeholder video area
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -191,6 +197,37 @@ fun ParentLiveScreen(
                     modifier = Modifier.size(64.dp),
                     tint = Color(0xFF2C2850)
                 )
+            }
+        }
+
+        // Connection-lost overlay
+        if (isDisconnected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xCC000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Outlined.WifiOff,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Connection lost",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Reconnecting…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NightText
+                    )
+                }
             }
         }
 

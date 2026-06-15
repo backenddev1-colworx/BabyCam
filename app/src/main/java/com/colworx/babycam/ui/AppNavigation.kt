@@ -13,6 +13,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.data.Role
+import com.colworx.babycam.service.MonitorController
 import com.colworx.babycam.signaling.RoomToken
 import com.colworx.babycam.ui.screens.BabyActiveScreen
 import com.colworx.babycam.ui.screens.BabyPairingScreen
@@ -78,13 +79,17 @@ fun AppNavigation() {
             LaunchedEffect(room) { LiveSession.startBaby(context, room) }
             BabyPairingScreen(
                 room = room,
-                onContinue = { nav.navigate(Routes.BABY_ACTIVE) },
+                onContinue = {
+                    MonitorController.start(context)
+                    nav.navigate(Routes.BABY_ACTIVE)
+                },
                 onCancel = { LiveSession.stop(); nav.popBackStack() },
             )
         }
         composable(Routes.BABY_ACTIVE) {
             BabyActiveScreen(onStop = {
                 LiveSession.stop()
+                MonitorController.stop(context)
                 nav.popBackStack(Routes.CHOOSE, false)
             })
         }
