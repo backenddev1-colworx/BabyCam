@@ -65,6 +65,13 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     // Lifecycle service
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+    // WebRTC (Stream's maintained build, Maven Central)
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
+    // MQTT — public broker signaling (no account needed)
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+    // CameraX (baby-side capture)
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
 
     // Unit tests
     testImplementation("junit:junit:4.13.2")
