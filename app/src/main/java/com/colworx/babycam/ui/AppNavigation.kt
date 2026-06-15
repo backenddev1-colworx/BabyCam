@@ -1,6 +1,7 @@
 package com.colworx.babycam.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -12,6 +13,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.data.Role
+import com.colworx.babycam.signaling.RoomToken
 import com.colworx.babycam.ui.screens.BabyActiveScreen
 import com.colworx.babycam.ui.screens.BabyPairingScreen
 import com.colworx.babycam.ui.screens.BatterySetupScreen
@@ -21,6 +23,7 @@ import com.colworx.babycam.ui.screens.ParentScanScreen
 import com.colworx.babycam.ui.screens.PermissionsScreen
 import com.colworx.babycam.ui.screens.SettingsScreen
 import com.colworx.babycam.ui.screens.WelcomeScreen
+import com.colworx.babycam.webrtc.LiveSession
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -71,14 +74,25 @@ fun AppNavigation() {
             BatterySetupScreen(onDone = { nav.navigate(Routes.BABY_PAIRING) })
         }
         composable(Routes.BABY_PAIRING) {
-            BabyPairingScreen(onCancel = { nav.popBackStack() })
-            // For Phase 1, advance to active from pairing is wired in Phase 4 (after real pairing).
+            val room = remember { RoomToken.generate() }
+            LaunchedEffect(room) { LiveSession.startBaby(context, room) }
+            BabyPairingScreen(
+                room = room,
+                onContinue = { nav.navigate(Routes.BABY_ACTIVE) },
+                onCancel = { LiveSession.stop(); nav.popBackStack() },
+            )
         }
         composable(Routes.BABY_ACTIVE) {
-            BabyActiveScreen(onStop = { nav.popBackStack(Routes.CHOOSE, false) })
+            BabyActiveScreen(onStop = {
+                LiveSession.stop()
+                nav.popBackStack(Routes.CHOOSE, false)
+            })
         }
         composable(Routes.PARENT_SCAN) {
-            ParentScanScreen(onScanned = { nav.navigate(Routes.PARENT_LIVE) })
+            ParentScanScreen(onScanned = { token ->
+                LiveSession.startParent(context, token)
+                nav.navigate(Routes.PARENT_LIVE)
+            })
         }
         composable(Routes.PARENT_LIVE) {
             ParentLiveScreen()

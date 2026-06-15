@@ -34,7 +34,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,7 +48,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.colworx.babycam.signaling.RoomToken
 import com.colworx.babycam.ui.components.AppCard
+import com.colworx.babycam.ui.components.PrimaryButton
 import com.colworx.babycam.ui.components.RoundControl
 import com.colworx.babycam.ui.components.StatusPill
 import com.colworx.babycam.ui.theme.BabyCamTheme
@@ -58,11 +62,26 @@ import com.colworx.babycam.ui.theme.Muted
 import com.colworx.babycam.ui.theme.NightBg
 import com.colworx.babycam.ui.theme.NightSurface
 import com.colworx.babycam.ui.theme.NightText
+import com.colworx.babycam.webrtc.LiveSession
+import com.colworx.babycam.webrtc.VideoRenderer
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 // 1) Parent scan screen ------------------------------------------------------
 
 @Composable
 fun ParentScanScreen(onScanned: (String) -> Unit = {}, onManual: () -> Unit = {}) {
+    val launcher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val token = result.contents
+        if (token != null && RoomToken.isValid(token)) onScanned(token)
+    }
+    val options = ScanOptions().apply {
+        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+        setPrompt("Scan the baby phone's code")
+        setBeepEnabled(false)
+        setOrientationLocked(false)
+    }
+    LaunchedEffect(Unit) { launcher.launch(options) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -112,6 +131,8 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}, onManual: () -> Unit = {}
             style = MaterialTheme.typography.labelSmall,
             color = NightText
         )
+        Spacer(Modifier.height(24.dp))
+        PrimaryButton(text = "Open scanner", onClick = { launcher.launch(options) })
     }
 }
 
@@ -142,24 +163,35 @@ fun ParentLiveScreen(
     onLullaby: () -> Unit = {},
     onSnapshot: () -> Unit = {}
 ) {
+    val track by LiveSession.remoteVideo
+    val connection = LiveSession.connection
+    var talking by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(NightBg)
     ) {
-        // Placeholder video area
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NightSurface),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.ChildCare,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = Color(0xFF2C2850)
+        if (connection != null) {
+            VideoRenderer(
+                track = track,
+                eglContext = connection.eglContext,
+                modifier = Modifier.fillMaxSize()
             )
+        } else {
+            // Placeholder video area
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(NightSurface),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.ChildCare,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = Color(0xFF2C2850)
+                )
+            }
         }
 
         // Top-left overlay
@@ -201,8 +233,12 @@ fun ParentLiveScreen(
             RoundControl(icon = Icons.Outlined.DarkMode, label = "Night", onClick = onNight)
             RoundControl(
                 icon = Icons.Outlined.Mic,
-                label = "Talk",
-                onClick = onTalk,
+                label = if (talking) "Talking" else "Talk",
+                onClick = {
+                    talking = !talking
+                    LiveSession.setTalking(talking)
+                    onTalk()
+                },
                 size = 54,
                 bg = IndigoDeep
             )

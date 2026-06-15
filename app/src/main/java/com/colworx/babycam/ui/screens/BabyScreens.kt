@@ -18,21 +18,28 @@ import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Hearing
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.foundation.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.colworx.babycam.signaling.QrCodes
 import com.colworx.babycam.ui.components.AppCard
+import com.colworx.babycam.ui.components.PrimaryButton
 import com.colworx.babycam.ui.components.SecondaryButton
 import com.colworx.babycam.ui.components.StatusPill
+import com.colworx.babycam.webrtc.LiveSession
+import com.colworx.babycam.webrtc.VideoRenderer
 import com.colworx.babycam.ui.theme.AlertRed
 import com.colworx.babycam.ui.theme.BabyCamTheme
 import com.colworx.babycam.ui.theme.IndigoDeep
@@ -46,9 +53,13 @@ import com.colworx.babycam.ui.theme.TealBg
 
 @Composable
 fun BabyPairingScreen(
-    statusText: String = "Waiting for parent…",
+    room: String,
+    onContinue: () -> Unit = {},
     onCancel: () -> Unit = {}
 ) {
+    val qrBitmap = remember(room) { QrCodes.encodeToBitmap(room, 600) }
+    val signalingUp by LiveSession.signalingUp
+    val statusText = if (signalingUp) "Waiting for parent…" else "Connecting…"
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -78,11 +89,10 @@ fun BabyPairingScreen(
                 .background(Color.White),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Outlined.QrCode2,
-                contentDescription = "QR code",
-                tint = Indigo900,
-                modifier = Modifier.size(120.dp)
+            Image(
+                bitmap = qrBitmap.asImageBitmap(),
+                contentDescription = "Pairing QR code",
+                modifier = Modifier.size(150.dp)
             )
         }
         Spacer(modifier = Modifier.height(20.dp))
@@ -97,6 +107,12 @@ fun BabyPairingScreen(
             style = MaterialTheme.typography.labelSmall,
             color = Muted,
             textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+        PrimaryButton(
+            text = "Go to monitor",
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }
@@ -119,10 +135,19 @@ fun BabyActiveScreen(onStop: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(120.dp)
+                .height(150.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(NightSurface)
         ) {
+            val connection = LiveSession.connection
+            if (connection != null) {
+                VideoRenderer(
+                    track = connection.localVideoTrack,
+                    eglContext = connection.eglContext,
+                    modifier = Modifier.fillMaxSize(),
+                    mirror = false
+                )
+            }
             Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -223,7 +248,7 @@ private fun FeatureCard(
 @Composable
 private fun BabyPairingScreenPreview() {
     BabyCamTheme {
-        BabyPairingScreen()
+        BabyPairingScreen(room = "DEMO")
     }
 }
 
