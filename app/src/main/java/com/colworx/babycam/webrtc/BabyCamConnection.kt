@@ -4,6 +4,11 @@ import android.content.Context
 import com.colworx.babycam.audio.LullabyPlayer
 import com.colworx.babycam.signaling.SignalMessage
 import com.colworx.babycam.signaling.SignalingClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.AudioTrack
 import org.webrtc.IceCandidate
@@ -31,20 +36,23 @@ class BabyCamConnection(
     private val selfId = UUID.randomUUID().toString().take(8)
     private val session = WebRtcSession(context, this)
     private val signaling = SignalingClient(selfId)
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     val eglContext get() = session.eglBase.eglBaseContext
     val localVideoTrack get() = session.localVideoTrack
 
     fun start() {
-        session.initialize()
-        if (role == ConnRole.BABY) {
-            session.startCamera(useFront = false)
-            session.startAudio()
-        }
-        signaling.connect(room, ::onSignal) { up ->
-            onSignalingUp(up)
-            if (up && role == ConnRole.BABY) {
-                session.createOffer { sdp -> signaling.send("offer", sdp.description) }
+        scope.launch {
+            session.initialize()
+            if (role == ConnRole.BABY) {
+                session.startCamera(useFront = false)
+                session.startAudio()
+            }
+            signaling.connect(room, ::onSignal) { up ->
+                onSignalingUp(up)
+                if (up && role == ConnRole.BABY) {
+                    session.createOffer { sdp -> signaling.send("offer", sdp.description) }
+                }
             }
         }
     }
@@ -94,6 +102,7 @@ class BabyCamConnection(
         LullabyPlayer.stop()
         signaling.close()
         session.close()
+        scope.cancel()
     }
 
     // WebRtcSession.Listener
