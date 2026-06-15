@@ -22,6 +22,7 @@ import androidx.core.app.ServiceCompat
 import com.colworx.babycam.MainActivity
 import com.colworx.babycam.audio.CryDetector
 import com.colworx.babycam.audio.Sensitivity
+import com.colworx.babycam.webrtc.LiveSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -94,10 +95,14 @@ class MonitorService : Service() {
             while (isActive) {
                 val read = ar.read(frame, 0, frame.size)
                 if (read > 0 && detector.process(frame.copyOf(read))) {
+                    // Notify the parent device over the active connection.
+                    LiveSession.sendCry()
+                    // Local fallback notification on the baby phone.
                     sendAlertNotification(
                         id = NOTIF_CRY_ID,
                         title = "Baby is crying!",
-                        text = "Tap to open BabyCam"
+                        text = "Tap to open BabyCam",
+                        contentIntent = parentLivePendingIntent()
                     )
                 }
             }
@@ -154,7 +159,12 @@ class MonitorService : Service() {
             .build()
     }
 
-    private fun sendAlertNotification(id: Int, title: String, text: String) {
+    private fun sendAlertNotification(
+        id: Int,
+        title: String,
+        text: String,
+        contentIntent: PendingIntent? = null
+    ) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val n = NotificationCompat.Builder(this, CHANNEL_ALERTS)
             .setContentTitle(title)
@@ -162,8 +172,21 @@ class MonitorService : Service() {
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .apply { contentIntent?.let { setContentIntent(it) } }
             .build()
         nm.notify(id, n)
+    }
+
+    /** PendingIntent that opens MainActivity straight into the parent live view. */
+    private fun parentLivePendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra("open_parent_live", true)
+        }
+        return PendingIntent.getActivity(
+            this, NOTIF_CRY_ID, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     private fun createNotificationChannels() {

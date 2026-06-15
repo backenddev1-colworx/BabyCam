@@ -29,8 +29,13 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -50,10 +55,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.core.content.ContextCompat
+import android.widget.Toast
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.media.nightModeFilter
+import com.colworx.babycam.security.PinManager
+import com.colworx.babycam.service.MonitorController
 import com.colworx.babycam.signaling.RoomToken
 import com.colworx.babycam.ui.components.AppCard
 import com.colworx.babycam.ui.components.PrimaryButton
@@ -166,11 +177,13 @@ private fun CornerBracket(modifier: Modifier, top: Boolean, start: Boolean) {
 
 @Composable
 fun ParentLiveScreen(
-    onSnapshot: () -> Unit = {}
+    onSettings: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val track by LiveSession.remoteVideo
     val connState by LiveSession.connState
     val connection = LiveSession.connection
+    val battery by LiveSession.babyBattery
     var talking by remember { mutableStateOf(false) }
     var nightMode by remember { mutableStateOf(false) }
     var showLullaby by remember { mutableStateOf(false) }
@@ -286,9 +299,23 @@ fun ParentLiveScreen(
                 tint = NightText
             )
             Text(
-                text = "Baby 78%",
+                text = if (battery != null) "Baby ${battery}%" else "Baby --",
                 style = MaterialTheme.typography.labelSmall,
                 color = NightText
+            )
+        }
+
+        // Top-right settings gear
+        IconButton(
+            onClick = onSettings,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = "Settings",
+                tint = NightText
             )
         }
 
@@ -327,7 +354,18 @@ fun ParentLiveScreen(
             RoundControl(
                 icon = Icons.Outlined.PhotoCamera,
                 label = "Snap",
-                onClick = onSnapshot
+                onClick = {
+                    LiveSession.captureSnapshot(context) { ok ->
+                        // Callback may run off the main thread — post the Toast on main.
+                        ContextCompat.getMainExecutor(context).execute {
+                            Toast.makeText(
+                                context,
+                                if (ok) "Saved to gallery" else "Snapshot failed",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
             )
         }
     }
@@ -423,18 +461,58 @@ private fun SoundRow(
 fun SettingsScreen(onBack: () -> Unit = {}) {
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
+    val pinManager = remember { PinManager(context) }
     val scope = rememberCoroutineScope()
 
     var crySensitivity by remember { mutableFloatStateOf(0.55f) }
-    var autoStart by remember { mutableStateOf(true) }
+    var autoStart by remember { mutableStateOf(MonitorController.isAutoStartEnabled(context)) }
     var dataSaver by remember { mutableStateOf(false) }
-    var appLock by remember { mutableStateOf(true) }
+
+    var showPinDialog by remember { mutableStateOf(false) }
+    var newPin by remember { mutableStateOf("") }
 
     // Load persisted values
     val savedSens by prefs.crySensitivity.collectAsState(initial = 0.55f)
     val savedDataSaver by prefs.dataSaver.collectAsState(initial = false)
+    val lockEnabled by pinManager.isEnabled.collectAsState(initial = false)
     LaunchedEffect(savedSens) { crySensitivity = savedSens }
     LaunchedEffect(savedDataSaver) { dataSaver = savedDataSaver }
+
+    if (showPinDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showPinDialog = false
+                newPin = ""
+            },
+            title = { Text("Set a PIN") },
+            text = {
+                OutlinedTextField(
+                    value = newPin,
+                    onValueChange = { v -> newPin = v.filter { it.isDigit() }.take(4) },
+                    label = { Text("4-digit PIN") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = newPin.length == 4,
+                    onClick = {
+                        val pin = newPin
+                        scope.launch { pinManager.setPin(pin) }
+                        showPinDialog = false
+                        newPin = ""
+                    }
+                ) { Text("Set PIN") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPinDialog = false
+                    newPin = ""
+                }) { Text("Cancel") }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -470,7 +548,10 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
 
         AppCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                SwitchRow("Auto-start on boot", autoStart) { autoStart = it }
+                SwitchRow("Auto-start on boot", autoStart) { v ->
+                    autoStart = v
+                    MonitorController.setAutoStart(context, v)
+                }
                 Spacer(Modifier.height(8.dp))
                 SwitchRow("Data-saver (audio only)", dataSaver) { v ->
                     dataSaver = v
@@ -480,7 +561,13 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                SwitchRow("App lock (PIN/biometric)", appLock) { appLock = it }
+                SwitchRow("App lock (PIN/biometric)", lockEnabled) { v ->
+                    if (v) {
+                        showPinDialog = true
+                    } else {
+                        scope.launch { pinManager.disable() }
+                    }
+                }
             }
         }
         Spacer(Modifier.height(12.dp))

@@ -15,7 +15,6 @@ import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.data.Role
 import com.colworx.babycam.security.PinManager
 import com.colworx.babycam.service.MonitorController
-import com.colworx.babycam.signaling.RoomToken
 import com.colworx.babycam.ui.screens.AppLockScreen
 import com.colworx.babycam.ui.screens.BabyActiveScreen
 import com.colworx.babycam.ui.screens.BabyPairingScreen
@@ -27,6 +26,7 @@ import com.colworx.babycam.ui.screens.PermissionsScreen
 import com.colworx.babycam.ui.screens.SettingsScreen
 import com.colworx.babycam.ui.screens.WelcomeScreen
 import com.colworx.babycam.webrtc.LiveSession
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -42,7 +42,7 @@ object Routes {
 }
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(startAtParentLive: Boolean = false) {
     val nav = rememberNavController()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -53,6 +53,17 @@ fun AppNavigation() {
 
     LaunchedEffect(Unit) {
         pinManager.isEnabled.collect { enabled -> locked = enabled }
+    }
+
+    // Cry-alert deep link: jump straight to the live view if a pairing is remembered.
+    LaunchedEffect(startAtParentLive) {
+        if (startAtParentLive) {
+            val savedRoom = prefs.parentRoom.first()
+            if (savedRoom != null) {
+                LiveSession.startParent(context, savedRoom)
+                nav.navigate(Routes.PARENT_LIVE)
+            }
+        }
     }
 
     if (locked) {
@@ -80,40 +91,61 @@ fun AppNavigation() {
         }
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(onContinue = {
-                if (pendingRole == Role.BABY) nav.navigate(Routes.BATTERY)
-                else nav.navigate(Routes.PARENT_SCAN)
+                if (pendingRole == Role.BABY) {
+                    nav.navigate(Routes.BATTERY)
+                } else {
+                    // Parent: skip scanning if a pairing is already remembered.
+                    scope.launch {
+                        val savedRoom = prefs.parentRoom.first()
+                        if (savedRoom != null) {
+                            LiveSession.startParent(context, savedRoom)
+                            nav.navigate(Routes.PARENT_LIVE)
+                        } else {
+                            nav.navigate(Routes.PARENT_SCAN)
+                        }
+                    }
+                }
             })
         }
         composable(Routes.BATTERY) {
             BatterySetupScreen(onDone = { nav.navigate(Routes.BABY_PAIRING) })
         }
         composable(Routes.BABY_PAIRING) {
-            val room = remember { RoomToken.generate() }
-            LaunchedEffect(room) { LiveSession.startBaby(context, room) }
-            BabyPairingScreen(
-                room = room,
-                onContinue = {
-                    MonitorController.start(context)
-                    nav.navigate(Routes.BABY_ACTIVE)
-                },
-                onCancel = { LiveSession.stop(); nav.popBackStack() },
-            )
+            // Reuse the persisted baby room so the pairing token survives restarts.
+            var room by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) { room = prefs.babyRoomOnce() }
+            val loadedRoom = room
+            if (loadedRoom != null) {
+                LaunchedEffect(loadedRoom) { LiveSession.startBaby(context, loadedRoom) }
+                BabyPairingScreen(
+                    room = loadedRoom,
+                    onContinue = {
+                        MonitorController.start(context)
+                        nav.navigate(Routes.BABY_ACTIVE)
+                    },
+                    onCancel = { LiveSession.stop(); nav.popBackStack() },
+                )
+            }
         }
         composable(Routes.BABY_ACTIVE) {
-            BabyActiveScreen(onStop = {
-                LiveSession.stop()
-                MonitorController.stop(context)
-                nav.popBackStack(Routes.CHOOSE, false)
-            })
+            BabyActiveScreen(
+                onStop = {
+                    LiveSession.stop()
+                    MonitorController.stop(context)
+                    nav.popBackStack(Routes.CHOOSE, false)
+                },
+                onSettings = { nav.navigate(Routes.SETTINGS) },
+            )
         }
         composable(Routes.PARENT_SCAN) {
             ParentScanScreen(onScanned = { token ->
+                scope.launch { prefs.setParentRoom(token) }
                 LiveSession.startParent(context, token)
                 nav.navigate(Routes.PARENT_LIVE)
             })
         }
         composable(Routes.PARENT_LIVE) {
-            ParentLiveScreen()
+            ParentLiveScreen(onSettings = { nav.navigate(Routes.SETTINGS) })
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { nav.popBackStack() })

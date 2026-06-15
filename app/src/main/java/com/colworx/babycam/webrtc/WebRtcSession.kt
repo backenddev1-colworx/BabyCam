@@ -138,12 +138,17 @@ class WebRtcSession(
         return names.firstOrNull()?.let { enumerator.createCapturer(it, null) }
     }
 
-    fun createOffer(onCreated: (SessionDescription) -> Unit) {
+    fun createOffer(iceRestart: Boolean = false, onCreated: (SessionDescription) -> Unit) {
         val pc = peerConnection ?: return
+        val constraints = MediaConstraints().apply {
+            if (iceRestart) {
+                mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+            }
+        }
         pc.createOffer(simpleSdpObserver { sdp ->
             pc.setLocalDescription(simpleSdpObserver(), sdp)
             onCreated(sdp)
-        }, MediaConstraints())
+        }, constraints)
     }
 
     fun createAnswer(onCreated: (SessionDescription) -> Unit) {

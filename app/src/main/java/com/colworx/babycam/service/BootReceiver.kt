@@ -15,6 +15,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         if (!MonitorController.isMonitoringEnabled(context)) return
+        if (!MonitorController.isAutoStartEnabled(context)) return
 
         // Android 14+ (API 34) prohibits camera/microphone foreground services
         // from starting via BOOT_COMPLETED. Show a tap-to-resume notification instead.

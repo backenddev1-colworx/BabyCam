@@ -18,8 +18,10 @@ import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Hearing
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,7 +120,7 @@ fun BabyPairingScreen(
 }
 
 @Composable
-fun BabyActiveScreen(onStop: () -> Unit) {
+fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -126,11 +128,24 @@ fun BabyActiveScreen(onStop: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        StatusPill(
-            text = "Monitoring active",
-            bg = TealBg,
-            fg = Teal
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatusPill(
+                text = "Monitoring active",
+                bg = TealBg,
+                fg = Teal
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onSettings) {
+                Icon(
+                    imageVector = Icons.Outlined.Settings,
+                    contentDescription = "Settings",
+                    tint = IndigoDeep
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(16.dp))
         Box(
             modifier = Modifier

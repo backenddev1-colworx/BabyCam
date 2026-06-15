@@ -2,6 +2,8 @@ package com.colworx.babycam.webrtc
 
 import android.content.Context
 import androidx.compose.runtime.mutableStateOf
+import com.colworx.babycam.media.FrameCapture
+import com.colworx.babycam.media.Snapshot
 import org.webrtc.PeerConnection
 import org.webrtc.VideoTrack
 
@@ -19,6 +21,12 @@ object LiveSession {
     val connState = mutableStateOf<PeerConnection.IceConnectionState?>(null)
     val signalingUp = mutableStateOf(false)
 
+    /** Parent-observed baby battery percent; null when unknown. */
+    val babyBattery = mutableStateOf<Int?>(null)
+
+    /** Bumped each time a cry alert is received so parent UI can react. */
+    val cryPing = mutableStateOf(0L)
+
     fun startBaby(context: Context, room: String) {
         stop()
         this.room = room
@@ -27,6 +35,8 @@ object LiveSession {
             onRemoteVideo = {},
             onState = { connState.value = it },
             onSignalingUp = { signalingUp.value = it },
+            onBatteryUpdate = { babyBattery.value = it },
+            onCryAlert = { cryPing.value = cryPing.value + 1 },
         ).also { it.start() }
     }
 
@@ -38,6 +48,8 @@ object LiveSession {
             onRemoteVideo = { remoteVideo.value = it },
             onState = { connState.value = it },
             onSignalingUp = { signalingUp.value = it },
+            onBatteryUpdate = { babyBattery.value = it },
+            onCryAlert = { cryPing.value = cryPing.value + 1 },
         ).also { it.start() }
     }
 
@@ -46,11 +58,36 @@ object LiveSession {
     fun sendLullaby(sound: String) = connection?.sendLullaby(sound) ?: Unit
     fun setVideoEnabled(enabled: Boolean) = connection?.setVideoEnabled(enabled) ?: Unit
 
+    /** Baby: publish a cry alert to the paired parent. */
+    fun sendCry() = connection?.sendCry() ?: Unit
+
+    /**
+     * Captures the current incoming (remote) video frame and saves it to the gallery.
+     * Invokes [onResult] with true on success. The callback may run off the main thread;
+     * callers showing UI (e.g. a Toast) are responsible for posting back to the main thread.
+     */
+    fun captureSnapshot(context: Context, onResult: (Boolean) -> Unit) {
+        val track = remoteVideo.value
+        if (track == null) {
+            onResult(false)
+            return
+        }
+        FrameCapture.capture(track) { bmp ->
+            if (bmp != null) {
+                val uri = Snapshot.saveToGallery(context.applicationContext, bmp)
+                onResult(uri != null)
+            } else {
+                onResult(false)
+            }
+        }
+    }
+
     fun stop() {
         connection?.stop()
         connection = null
         remoteVideo.value = null
         connState.value = null
         signalingUp.value = false
+        babyBattery.value = null
     }
 }

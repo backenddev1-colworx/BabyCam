@@ -12,6 +12,7 @@ object MonitorController {
 
     private const val PREFS = "babycam_svc"
     private const val KEY_MONITORING = "monitoring"
+    private const val KEY_AUTO_START = "auto_start"
 
     fun start(context: Context) {
         val appContext = context.applicationContext
@@ -35,6 +36,22 @@ object MonitorController {
         return context.applicationContext
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_MONITORING, false)
+    }
+
+    /** Persists whether monitoring should auto-resume after a device reboot. */
+    fun setAutoStart(context: Context, enabled: Boolean) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AUTO_START, enabled)
+            .apply()
+    }
+
+    /** Whether monitoring should auto-resume after reboot. Defaults to true. */
+    fun isAutoStartEnabled(context: Context): Boolean {
+        return context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUTO_START, true)
     }
 
     private fun setMonitoringEnabled(context: Context, enabled: Boolean) {
