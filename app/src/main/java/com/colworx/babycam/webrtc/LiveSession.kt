@@ -27,6 +27,11 @@ object LiveSession {
     /** Bumped each time a cry alert is received so parent UI can react. */
     val cryPing = mutableStateOf(0L)
 
+    /** Remote control state — parent controls these, baby obeys. */
+    val babyCamEnabled = mutableStateOf(true)
+    val babyMicEnabled = mutableStateOf(true)
+    val babyTorchOn = mutableStateOf(false)
+
     fun startBaby(context: Context, room: String) {
         stop()
         this.room = room
@@ -56,6 +61,22 @@ object LiveSession {
     fun setTalking(on: Boolean) = connection?.setTalking(on) ?: Unit
     fun switchCamera() = connection?.switchCamera() ?: Unit
     fun sendLullaby(sound: String) = connection?.sendLullaby(sound) ?: Unit
+
+    fun setRemoteCamera(on: Boolean) {
+        babyCamEnabled.value = on
+        connection?.setRemoteCamera(on)
+    }
+
+    fun setRemoteMic(on: Boolean) {
+        babyMicEnabled.value = on
+        connection?.setRemoteMic(on)
+    }
+
+    fun setTorch(on: Boolean) {
+        babyTorchOn.value = on
+        connection?.setTorch(on)
+    }
+
     fun setVideoEnabled(enabled: Boolean) = connection?.setVideoEnabled(enabled) ?: Unit
 
     /** Baby: publish a cry alert to the paired parent. */
@@ -89,5 +110,8 @@ object LiveSession {
         connState.value = null
         signalingUp.value = false
         babyBattery.value = null
+        babyCamEnabled.value = true
+        babyMicEnabled.value = true
+        babyTorchOn.value = false
     }
 }

@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -64,6 +65,7 @@ fun BabyPairingScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Lavender50)
+            .safeDrawingPadding()
             .padding(18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -134,6 +136,7 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
         modifier = Modifier
             .fillMaxSize()
             .background(Lavender50)
+            .safeDrawingPadding()
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {

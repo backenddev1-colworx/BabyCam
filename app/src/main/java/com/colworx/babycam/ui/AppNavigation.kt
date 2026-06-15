@@ -146,7 +146,15 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
         }
 
         composable(Routes.PARENT_LIVE) {
-            ParentLiveScreen(onSettings = { nav.navigate(Routes.SETTINGS) })
+            ParentLiveScreen(
+                onSettings = { nav.navigate(Routes.SETTINGS) },
+                onDisconnect = {
+                    LiveSession.stop()
+                    nav.navigate(Routes.CHOOSE) {
+                        popUpTo(Routes.WELCOME) { inclusive = false }
+                    }
+                }
+            )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { nav.popBackStack() })

@@ -3,6 +3,7 @@ package com.colworx.babycam.signaling
 import android.util.Log
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.MqttCallback
+import org.eclipse.paho.client.mqttv3.MqttCallbackExtended
 import org.eclipse.paho.client.mqttv3.MqttClient
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
@@ -65,6 +66,7 @@ class SignalingClient(
     fun connect(
         room: String,
         onMessage: (SignalMessage) -> Unit,
+        onReconnected: (() -> Unit)? = null,
         onState: (Boolean) -> Unit
     ) {
         topic = "babycam/$room"
@@ -76,7 +78,20 @@ class SignalingClient(
                 Log.d(TAG, "Connecting to $brokerUrl, topic=$topic, clientId=$clientId")
                 val mqtt = MqttClient(brokerUrl, clientId, MemoryPersistence())
 
-                mqtt.setCallback(object : MqttCallback {
+                mqtt.setCallback(object : MqttCallbackExtended {
+                    override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        if (reconnect) {
+                            try {
+                                mqtt.subscribe(topic, 1)
+                                Log.d(TAG, "Reconnected and re-subscribed to $topic")
+                                onState(true)
+                                onReconnected?.invoke()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Re-subscribe after reconnect failed: ${e.message}")
+                            }
+                        }
+                    }
+
                     override fun connectionLost(cause: Throwable?) {
                         Log.w(TAG, "Connection lost: ${cause?.message}")
                         onState(false)

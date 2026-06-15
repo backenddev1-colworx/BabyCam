@@ -127,6 +127,7 @@ class WebRtcSession(
     }
 
     fun setLocalAudioEnabled(enabled: Boolean) { localAudioTrack?.setEnabled(enabled) }
+    fun setLocalVideoEnabled(enabled: Boolean) { localVideoTrack?.setEnabled(enabled) }
     fun switchCamera() { videoCapturer?.switchCamera(null) }
 
     private fun createCameraCapturer(useFront: Boolean): CameraVideoCapturer? {

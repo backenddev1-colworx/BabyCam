@@ -1,5 +1,6 @@
 package com.colworx.babycam.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,8 +12,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,15 +24,23 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.BatteryStd
+import androidx.compose.material.icons.outlined.CallEnd
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ChildCare
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FlashOff
+import androidx.compose.material.icons.outlined.FlashOn
+import androidx.compose.material.icons.outlined.FlipCameraAndroid
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Videocam
+import androidx.compose.material.icons.outlined.VideocamOff
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.draw.clip
@@ -89,6 +101,7 @@ import com.colworx.babycam.ui.theme.NightSurface
 import com.colworx.babycam.ui.theme.NightText
 import com.colworx.babycam.webrtc.LiveSession
 import com.colworx.babycam.webrtc.VideoRenderer
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // 1) Parent scan screen ------------------------------------------------------
@@ -100,7 +113,6 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    // Auto-submit when 4 digits entered
     LaunchedEffect(code) {
         if (code.length == 4 && RoomToken.isValid(code)) onScanned(code)
     }
@@ -109,6 +121,7 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
         modifier = Modifier
             .fillMaxSize()
             .background(NightBg)
+            .safeDrawingPadding()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -126,7 +139,6 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
         )
         Spacer(Modifier.height(40.dp))
 
-        // Hidden text field drives the OTP boxes
         BasicTextField(
             value = code,
             onValueChange = { v ->
@@ -141,7 +153,6 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
                 .focusRequester(focusRequester)
         )
 
-        // 4 digit boxes
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             repeat(4) { i ->
                 val digit = code.getOrNull(i)?.toString() ?: ""
@@ -183,26 +194,66 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
 
 @Composable
 fun ParentLiveScreen(
-    onSettings: () -> Unit = {}
+    onSettings: () -> Unit = {},
+    onDisconnect: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val track by LiveSession.remoteVideo
     val connState by LiveSession.connState
     val connection = LiveSession.connection
     val battery by LiveSession.babyBattery
+    val babyCamOn by LiveSession.babyCamEnabled
+    val babyMicOn by LiveSession.babyMicEnabled
+    val torchOn by LiveSession.babyTorchOn
+
     var talking by remember { mutableStateOf(false) }
     var nightMode by remember { mutableStateOf(false) }
     var showLullaby by remember { mutableStateOf(false) }
+    var showDisconnectDialog by remember { mutableStateOf(false) }
+
+    // Elapsed time since screen opened
+    var elapsedSeconds by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000L)
+            elapsedSeconds++
+        }
+    }
 
     val isDisconnected = connState == org.webrtc.PeerConnection.IceConnectionState.FAILED ||
         connState == org.webrtc.PeerConnection.IceConnectionState.DISCONNECTED ||
         connState == org.webrtc.PeerConnection.IceConnectionState.CLOSED
+
+    // Intercept back button — require explicit disconnect
+    BackHandler { showDisconnectDialog = true }
+
+    if (showDisconnectDialog) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectDialog = false },
+            title = { Text("Stop monitoring?") },
+            text = { Text("This will disconnect from the baby camera.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDisconnectDialog = false
+                    onDisconnect()
+                }) {
+                    Text("Disconnect", color = Color(0xFFFF6B6B))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectDialog = false }) {
+                    Text("Keep watching")
+                }
+            }
+        )
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(NightBg)
     ) {
+        // Full-screen video feed
         if (connection != null) {
             VideoRenderer(
                 track = track,
@@ -227,7 +278,7 @@ fun ParentLiveScreen(
             }
         }
 
-        // Lullaby picker sheet
+        // Lullaby picker overlay
         if (showLullaby) {
             Box(
                 modifier = Modifier
@@ -285,13 +336,15 @@ fun ParentLiveScreen(
             }
         }
 
-        // Top-left overlay
+        // ── Top status bar ────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(16.dp),
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             StatusPill(
                 text = "LIVE",
@@ -301,78 +354,151 @@ fun ParentLiveScreen(
             Icon(
                 imageVector = Icons.Outlined.BatteryStd,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(14.dp),
                 tint = NightText
             )
             Text(
-                text = if (battery != null) "Baby ${battery}%" else "Baby --",
+                text = if (battery != null) "${battery}%" else "--",
                 style = MaterialTheme.typography.labelSmall,
                 color = NightText
             )
+            if (elapsedSeconds > 0) {
+                Text(
+                    text = "· %02d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NightText
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = NightText)
+            }
+            IconButton(
+                onClick = { showDisconnectDialog = true },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.CallEnd,
+                    contentDescription = "Disconnect",
+                    tint = Color(0xFFFF6B6B)
+                )
+            }
         }
 
-        // Top-right settings gear
-        IconButton(
-            onClick = onSettings,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Settings,
-                contentDescription = "Settings",
-                tint = NightText
-            )
-        }
-
-        // Bottom control bar
-        Row(
+        // ── Bottom control panel ──────────────────────────────────────
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Color(0x99000000))
-                .padding(vertical = 16.dp, horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+                .background(Color(0xEE070714))
+                .navigationBarsPadding()
+                .padding(top = 10.dp, bottom = 6.dp)
         ) {
-            RoundControl(
-                icon = Icons.Outlined.DarkMode,
-                label = if (nightMode) "Night ON" else "Night",
-                onClick = { nightMode = !nightMode },
-                bg = if (nightMode) Color(0xFF1D3320) else Color(0x33FFFFFF),
-                fg = if (nightMode) Color(0xFF4CAF50) else NightText
+            // Section label: Baby Phone
+            Text(
+                text = "BABY PHONE",
+                color = Color(0x88FFFFFF),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 1.5.sp,
+                modifier = Modifier.padding(start = 16.dp, bottom = 6.dp)
             )
-            RoundControl(
-                icon = Icons.Outlined.Mic,
-                label = if (talking) "Talking" else "Talk",
-                onClick = {
-                    talking = !talking
-                    LiveSession.setTalking(talking)
-                },
-                size = 54,
-                bg = IndigoDeep
+
+            // Row 1 — remote baby controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RoundControl(
+                    icon = if (babyCamOn) Icons.Outlined.Videocam else Icons.Outlined.VideocamOff,
+                    label = if (babyCamOn) "Cam ON" else "Cam OFF",
+                    onClick = { LiveSession.setRemoteCamera(!babyCamOn) },
+                    bg = if (babyCamOn) Color(0x33FFFFFF) else Color(0x44FF4444),
+                    fg = if (babyCamOn) Color.White else Color(0xFFFF8080)
+                )
+                RoundControl(
+                    icon = if (babyMicOn) Icons.Outlined.Mic else Icons.Outlined.MicOff,
+                    label = if (babyMicOn) "Mic ON" else "Mic OFF",
+                    onClick = { LiveSession.setRemoteMic(!babyMicOn) },
+                    bg = if (babyMicOn) Color(0x33FFFFFF) else Color(0x44FF4444),
+                    fg = if (babyMicOn) Color.White else Color(0xFFFF8080)
+                )
+                RoundControl(
+                    icon = if (torchOn) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
+                    label = if (torchOn) "Torch ON" else "Torch",
+                    onClick = { LiveSession.setTorch(!torchOn) },
+                    bg = if (torchOn) Color(0xFF2D2500) else Color(0x33FFFFFF),
+                    fg = if (torchOn) Color(0xFFFFD54F) else NightText
+                )
+                RoundControl(
+                    icon = Icons.Outlined.FlipCameraAndroid,
+                    label = "Flip Cam",
+                    onClick = { LiveSession.switchCamera() }
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .height(0.5.dp)
+                    .background(Color(0x33FFFFFF))
             )
-            RoundControl(
-                icon = Icons.Outlined.MusicNote,
-                label = "Lullaby",
-                onClick = { showLullaby = true }
-            )
-            RoundControl(
-                icon = Icons.Outlined.PhotoCamera,
-                label = "Snap",
-                onClick = {
-                    LiveSession.captureSnapshot(context) { ok ->
-                        // Callback may run off the main thread — post the Toast on main.
-                        ContextCompat.getMainExecutor(context).execute {
-                            Toast.makeText(
-                                context,
-                                if (ok) "Saved to gallery" else "Snapshot failed",
-                                Toast.LENGTH_SHORT
-                            ).show()
+            Spacer(Modifier.height(8.dp))
+
+            // Row 2 — parent controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RoundControl(
+                    icon = Icons.Outlined.RecordVoiceOver,
+                    label = if (talking) "Talking" else "Talk",
+                    onClick = {
+                        talking = !talking
+                        LiveSession.setTalking(talking)
+                    },
+                    size = 52,
+                    bg = if (talking) IndigoDeep else Color(0x33FFFFFF),
+                    fg = Color.White
+                )
+                RoundControl(
+                    icon = Icons.Outlined.DarkMode,
+                    label = if (nightMode) "Night ON" else "Night",
+                    onClick = { nightMode = !nightMode },
+                    bg = if (nightMode) Color(0xFF1D3320) else Color(0x33FFFFFF),
+                    fg = if (nightMode) Color(0xFF4CAF50) else NightText
+                )
+                RoundControl(
+                    icon = Icons.Outlined.MusicNote,
+                    label = "Lullaby",
+                    onClick = { showLullaby = true }
+                )
+                RoundControl(
+                    icon = Icons.Outlined.PhotoCamera,
+                    label = "Snapshot",
+                    onClick = {
+                        LiveSession.captureSnapshot(context) { ok ->
+                            ContextCompat.getMainExecutor(context).execute {
+                                Toast.makeText(
+                                    context,
+                                    if (ok) "Saved to gallery" else "Snapshot failed",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     }
-                }
-            )
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
         }
     }
 }
@@ -384,11 +510,11 @@ fun LullabyPickerSheet(onSelect: (String) -> Unit = {}, onStop: () -> Unit = {})
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .background(Lavender50, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Drag handle
         Box(
             modifier = Modifier
                 .width(36.dp)
@@ -477,7 +603,6 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
     var showPinDialog by remember { mutableStateOf(false) }
     var newPin by remember { mutableStateOf("") }
 
-    // Load persisted values
     val savedSens by prefs.crySensitivity.collectAsState(initial = 0.55f)
     val savedDataSaver by prefs.dataSaver.collectAsState(initial = false)
     val lockEnabled by pinManager.isEnabled.collectAsState(initial = false)
@@ -524,6 +649,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
         modifier = Modifier
             .fillMaxSize()
             .background(Lavender50)
+            .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {

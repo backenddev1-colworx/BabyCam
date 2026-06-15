@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.os.BatteryManager
 import android.util.Log
 import com.colworx.babycam.audio.LullabyPlayer
@@ -61,13 +63,30 @@ class BabyCamConnection(
                 session.startCamera(useFront = false)
                 session.startAudio()
             }
-            signaling.connect(room, ::onSignal) { up ->
+            signaling.connect(
+                room = room,
+                onMessage = ::onSignal,
+                onReconnected = {
+                    Log.d(TAG, "MQTT reconnected, re-initiating for role=$role")
+                    scope.launch {
+                        when (role) {
+                            ConnRole.BABY -> session.createOffer { sdp ->
+                                Log.d(TAG, "Baby: re-offer after MQTT reconnect")
+                                signaling.send("offer", sdp.description, retained = true)
+                            }
+                            ConnRole.PARENT -> {
+                                Log.d(TAG, "Parent: re-ping after MQTT reconnect")
+                                signaling.send("ping", "")
+                            }
+                        }
+                    }
+                }
+            ) { up ->
                 onSignalingUp(up)
                 Log.d(TAG, "Signaling ${if (up) "UP" else "DOWN"}, role=$role")
                 if (up) {
                     when (role) {
                         ConnRole.BABY -> {
-                            // Send retained offer so late-subscribing parent gets it immediately
                             session.createOffer { sdp ->
                                 Log.d(TAG, "Baby: initial offer created")
                                 signaling.send("offer", sdp.description, retained = true)
@@ -75,9 +94,12 @@ class BabyCamConnection(
                             registerBatteryReceiver()
                         }
                         ConnRole.PARENT -> {
-                            // Tell baby we're ready — baby will re-create a fresh offer+ICE
+                            // Pre-add a muted audio track so it's already in the SDP answer.
+                            // This avoids renegotiation when user presses Talk later.
+                            session.startAudio()
+                            session.setLocalAudioEnabled(false)
                             signaling.send("ping", "")
-                            Log.d(TAG, "Parent: sent ping to baby")
+                            Log.d(TAG, "Parent: sent ping, audio pre-added (muted)")
                         }
                     }
                 }
@@ -114,6 +136,20 @@ class BabyCamConnection(
                     Log.d(TAG, "Baby: fresh offer created for parent")
                     signaling.send("offer", sdp.description, retained = true)
                 }
+            }
+            "remote_cam" -> if (role == ConnRole.BABY) {
+                val on = msg.payload == "on"
+                session.setLocalVideoEnabled(on)
+                Log.d(TAG, "Baby: camera ${if (on) "ON" else "OFF"} by parent")
+            }
+            "remote_mic" -> if (role == ConnRole.BABY) {
+                val on = msg.payload == "on"
+                session.setLocalAudioEnabled(on)
+                Log.d(TAG, "Baby: mic ${if (on) "ON" else "OFF"} by parent")
+            }
+            "torch" -> if (role == ConnRole.BABY) {
+                val on = msg.payload == "on"
+                controlTorch(on)
             }
             "offer" -> if (role == ConnRole.PARENT) {
                 Log.d(TAG, "Parent: received offer, creating answer")
@@ -152,12 +188,9 @@ class BabyCamConnection(
         }
     }
 
-    /** Parent: enable/disable own mic for two-way talk. */
+    /** Parent: enable/disable own mic for two-way talk. Audio track is pre-added in start(). */
     fun setTalking(on: Boolean) {
-        if (role == ConnRole.PARENT) {
-            if (on && session.localAudioTrack == null) session.startAudio()
-            session.setLocalAudioEnabled(on)
-        }
+        if (role == ConnRole.PARENT) session.setLocalAudioEnabled(on)
     }
 
     fun switchCamera() = session.switchCamera()
@@ -197,11 +230,31 @@ class BabyCamConnection(
 
     override fun onConnectionStateChange(state: PeerConnection.IceConnectionState) {
         onState(state)
-        if (role != ConnRole.BABY) return
         when (state) {
-            PeerConnection.IceConnectionState.FAILED -> scheduleIceRestart(delayMs = 1500)
-            PeerConnection.IceConnectionState.DISCONNECTED -> scheduleIceRestart(delayMs = 4000)
+            PeerConnection.IceConnectionState.FAILED,
+            PeerConnection.IceConnectionState.DISCONNECTED -> {
+                if (role == ConnRole.BABY) {
+                    val delay = if (state == PeerConnection.IceConnectionState.FAILED) 1500L else 4000L
+                    scheduleIceRestart(delayMs = delay)
+                } else {
+                    scheduleParentReconnect()
+                }
+            }
             else -> {}
+        }
+    }
+
+    /** Parent side: ask baby to re-offer, which triggers a fresh ICE negotiation. */
+    private fun scheduleParentReconnect() {
+        if (!iceRestarting.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                delay(3000L)
+                Log.d(TAG, "Parent: requesting re-offer from baby after ICE failure")
+                signaling.send("ping", "")
+            } finally {
+                iceRestarting.set(false)
+            }
         }
     }
 
@@ -222,6 +275,24 @@ class BabyCamConnection(
             }
         }
     }
+
+    private fun controlTorch(on: Boolean) {
+        try {
+            val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = manager.cameraIdList.firstOrNull { id ->
+                manager.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            } ?: return
+            manager.setTorchMode(cameraId, on)
+            Log.d(TAG, "Torch ${if (on) "ON" else "OFF"}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Torch control failed: ${e.message}")
+        }
+    }
+
+    fun setRemoteCamera(on: Boolean) = signaling.send("remote_cam", if (on) "on" else "off")
+    fun setRemoteMic(on: Boolean) = signaling.send("remote_mic", if (on) "on" else "off")
+    fun setTorch(on: Boolean) = signaling.send("torch", if (on) "on" else "off")
 
     private fun parseIce(payload: String): IceCandidate? = try {
         val o = JSONObject(payload)
