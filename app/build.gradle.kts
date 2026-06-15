@@ -53,4 +53,20 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.compose.ui:ui-tooling-preview")
+
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Signaling (WebSocket) + JSON
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // QR generate + scan
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // App lock — biometric
+    implementation("androidx.biometric:biometric:1.1.0")
+    // Lifecycle service
+    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+
+    // Unit tests
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }
