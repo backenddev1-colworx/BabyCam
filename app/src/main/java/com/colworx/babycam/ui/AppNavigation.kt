@@ -13,8 +13,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.data.Role
+import com.colworx.babycam.security.PinManager
 import com.colworx.babycam.service.MonitorController
 import com.colworx.babycam.signaling.RoomToken
+import com.colworx.babycam.ui.screens.AppLockScreen
 import com.colworx.babycam.ui.screens.BabyActiveScreen
 import com.colworx.babycam.ui.screens.BabyPairingScreen
 import com.colworx.babycam.ui.screens.BatterySetupScreen
@@ -45,7 +47,18 @@ fun AppNavigation() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { AppPreferences(context) }
+    val pinManager = remember { PinManager(context) }
     var pendingRole by remember { mutableStateOf(Role.NONE) }
+    var locked by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        pinManager.isEnabled.collect { enabled -> locked = enabled }
+    }
+
+    if (locked) {
+        AppLockScreen(onUnlocked = { locked = false })
+        return
+    }
 
     NavHost(navController = nav, startDestination = Routes.WELCOME) {
         composable(Routes.WELCOME) {

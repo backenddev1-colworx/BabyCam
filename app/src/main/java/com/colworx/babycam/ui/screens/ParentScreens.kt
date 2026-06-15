@@ -38,21 +38,27 @@ import androidx.compose.material3.Text
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.colworx.babycam.data.AppPreferences
+import com.colworx.babycam.media.nightModeFilter
 import com.colworx.babycam.signaling.RoomToken
 import com.colworx.babycam.ui.components.AppCard
 import com.colworx.babycam.ui.components.PrimaryButton
 import com.colworx.babycam.ui.components.RoundControl
+import com.colworx.babycam.ui.components.SecondaryButton
 import com.colworx.babycam.ui.components.StatusPill
 import com.colworx.babycam.ui.theme.BabyCamTheme
 import com.colworx.babycam.ui.theme.IndigoDeep
@@ -67,6 +73,7 @@ import com.colworx.babycam.webrtc.LiveSession
 import com.colworx.babycam.webrtc.VideoRenderer
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.launch
 
 // 1) Parent scan screen ------------------------------------------------------
 
@@ -159,15 +166,14 @@ private fun CornerBracket(modifier: Modifier, top: Boolean, start: Boolean) {
 
 @Composable
 fun ParentLiveScreen(
-    onNight: () -> Unit = {},
-    onTalk: () -> Unit = {},
-    onLullaby: () -> Unit = {},
     onSnapshot: () -> Unit = {}
 ) {
     val track by LiveSession.remoteVideo
     val connState by LiveSession.connState
     val connection = LiveSession.connection
     var talking by remember { mutableStateOf(false) }
+    var nightMode by remember { mutableStateOf(false) }
+    var showLullaby by remember { mutableStateOf(false) }
 
     val isDisconnected = connState == org.webrtc.PeerConnection.IceConnectionState.FAILED ||
         connState == org.webrtc.PeerConnection.IceConnectionState.DISCONNECTED ||
@@ -182,7 +188,9 @@ fun ParentLiveScreen(
             VideoRenderer(
                 track = track,
                 eglContext = connection.eglContext,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nightModeFilter(nightMode)
             )
         } else {
             Box(
@@ -196,6 +204,33 @@ fun ParentLiveScreen(
                     contentDescription = null,
                     modifier = Modifier.size(64.dp),
                     tint = Color(0xFF2C2850)
+                )
+            }
+        }
+
+        // Lullaby picker sheet
+        if (showLullaby) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x99000000))
+                    .clickable { showLullaby = false },
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                LullabyPickerSheet(
+                    onSelect = { sound ->
+                        val tag = when (sound) {
+                            "Heartbeat" -> "heartbeat"
+                            "Rain" -> "rain"
+                            else -> "white_noise"
+                        }
+                        LiveSession.sendLullaby(tag)
+                        showLullaby = false
+                    },
+                    onStop = {
+                        LiveSession.sendLullaby("stop")
+                        showLullaby = false
+                    }
                 )
             }
         }
@@ -267,20 +302,33 @@ fun ParentLiveScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            RoundControl(icon = Icons.Outlined.DarkMode, label = "Night", onClick = onNight)
+            RoundControl(
+                icon = Icons.Outlined.DarkMode,
+                label = if (nightMode) "Night ON" else "Night",
+                onClick = { nightMode = !nightMode },
+                bg = if (nightMode) Color(0xFF1D3320) else Color(0x33FFFFFF),
+                fg = if (nightMode) Color(0xFF4CAF50) else NightText
+            )
             RoundControl(
                 icon = Icons.Outlined.Mic,
                 label = if (talking) "Talking" else "Talk",
                 onClick = {
                     talking = !talking
                     LiveSession.setTalking(talking)
-                    onTalk()
                 },
                 size = 54,
                 bg = IndigoDeep
             )
-            RoundControl(icon = Icons.Outlined.MusicNote, label = "Lullaby", onClick = onLullaby)
-            RoundControl(icon = Icons.Outlined.PhotoCamera, label = "Snap", onClick = onSnapshot)
+            RoundControl(
+                icon = Icons.Outlined.MusicNote,
+                label = "Lullaby",
+                onClick = { showLullaby = true }
+            )
+            RoundControl(
+                icon = Icons.Outlined.PhotoCamera,
+                label = "Snap",
+                onClick = onSnapshot
+            )
         }
     }
 }
@@ -325,6 +373,8 @@ fun LullabyPickerSheet(onSelect: (String) -> Unit = {}, onStop: () -> Unit = {})
             SoundRow("Heartbeat", Icons.Outlined.Favorite, selected = false) { onSelect("Heartbeat") }
             Spacer(Modifier.height(10.dp))
             SoundRow("Rain", Icons.Outlined.Cloud, selected = false) { onSelect("Rain") }
+            Spacer(Modifier.height(16.dp))
+            SecondaryButton(text = "Stop sound", onClick = onStop, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -371,10 +421,20 @@ private fun SoundRow(
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit = {}) {
+    val context = LocalContext.current
+    val prefs = remember { AppPreferences(context) }
+    val scope = rememberCoroutineScope()
+
     var crySensitivity by remember { mutableFloatStateOf(0.55f) }
     var autoStart by remember { mutableStateOf(true) }
     var dataSaver by remember { mutableStateOf(false) }
     var appLock by remember { mutableStateOf(true) }
+
+    // Load persisted values
+    val savedSens by prefs.crySensitivity.collectAsState(initial = 0.55f)
+    val savedDataSaver by prefs.dataSaver.collectAsState(initial = false)
+    LaunchedEffect(savedSens) { crySensitivity = savedSens }
+    LaunchedEffect(savedDataSaver) { dataSaver = savedDataSaver }
 
     Column(
         modifier = Modifier
@@ -399,7 +459,10 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                 )
                 Slider(
                     value = crySensitivity,
-                    onValueChange = { crySensitivity = it }
+                    onValueChange = { v ->
+                        crySensitivity = v
+                        scope.launch { prefs.setCrySensitivity(v) }
+                    }
                 )
             }
         }
@@ -409,7 +472,13 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 SwitchRow("Auto-start on boot", autoStart) { autoStart = it }
                 Spacer(Modifier.height(8.dp))
-                SwitchRow("Data-saver (audio only)", dataSaver) { dataSaver = it }
+                SwitchRow("Data-saver (audio only)", dataSaver) { v ->
+                    dataSaver = v
+                    scope.launch {
+                        prefs.setDataSaver(v)
+                        LiveSession.setVideoEnabled(!v)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 SwitchRow("App lock (PIN/biometric)", appLock) { appLock = it }
             }

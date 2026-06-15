@@ -1,6 +1,7 @@
 package com.colworx.babycam.webrtc
 
 import android.content.Context
+import com.colworx.babycam.audio.LullabyPlayer
 import com.colworx.babycam.signaling.SignalMessage
 import com.colworx.babycam.signaling.SignalingClient
 import org.json.JSONObject
@@ -58,6 +59,19 @@ class BabyCamConnection(
                 session.setRemoteDescription(SessionDescription(SessionDescription.Type.ANSWER, msg.payload))
             }
             "ice" -> parseIce(msg.payload)?.let { session.addRemoteIceCandidate(it) }
+            "lullaby" -> if (role == ConnRole.BABY) {
+                if (msg.payload == "stop") LullabyPlayer.stop()
+                else LullabyPlayer.play(
+                    when (msg.payload) {
+                        "heartbeat" -> LullabyPlayer.Sound.HEARTBEAT
+                        "rain" -> LullabyPlayer.Sound.RAIN
+                        else -> LullabyPlayer.Sound.WHITE_NOISE
+                    }
+                )
+            }
+            "video_enabled" -> if (role == ConnRole.BABY) {
+                session.localVideoTrack?.setEnabled(msg.payload == "true")
+            }
             else -> {}
         }
     }
@@ -72,7 +86,12 @@ class BabyCamConnection(
 
     fun switchCamera() = session.switchCamera()
 
+    fun sendLullaby(sound: String) = signaling.send("lullaby", sound)
+
+    fun setVideoEnabled(enabled: Boolean) = signaling.send("video_enabled", enabled.toString())
+
     fun stop() {
+        LullabyPlayer.stop()
         signaling.close()
         session.close()
     }

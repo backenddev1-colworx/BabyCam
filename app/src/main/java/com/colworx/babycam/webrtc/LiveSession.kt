@@ -43,6 +43,8 @@ object LiveSession {
 
     fun setTalking(on: Boolean) = connection?.setTalking(on) ?: Unit
     fun switchCamera() = connection?.switchCamera() ?: Unit
+    fun sendLullaby(sound: String) = connection?.sendLullaby(sound) ?: Unit
+    fun setVideoEnabled(enabled: Boolean) = connection?.setVideoEnabled(enabled) ?: Unit
 
     fun stop() {
         connection?.stop()
