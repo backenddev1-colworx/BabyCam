@@ -167,9 +167,10 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
                 .background(NightSurface)
         ) {
             val connection = LiveSession.connection
+            val localTrack by LiveSession.localVideo
             if (connection != null) {
                 VideoRenderer(
-                    track = connection.localVideoTrack,
+                    track = localTrack,
                     eglContext = connection.eglContext,
                     modifier = Modifier.fillMaxSize(),
                     mirror = false

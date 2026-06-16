@@ -18,6 +18,10 @@ object LiveSession {
         private set
 
     val remoteVideo = mutableStateOf<VideoTrack?>(null)
+
+    /** Baby-observed own camera preview track; null until the camera capturer is up. */
+    val localVideo = mutableStateOf<VideoTrack?>(null)
+
     val connState = mutableStateOf<PeerConnection.IceConnectionState?>(null)
     val signalingUp = mutableStateOf(false)
 
@@ -38,6 +42,7 @@ object LiveSession {
         connection = BabyCamConnection(
             context.applicationContext, ConnRole.BABY, room,
             onRemoteVideo = {},
+            onLocalVideo = { localVideo.value = it },
             onState = { connState.value = it },
             onSignalingUp = { signalingUp.value = it },
             onBatteryUpdate = { babyBattery.value = it },
@@ -110,6 +115,7 @@ object LiveSession {
         connection?.stop()
         connection = null
         remoteVideo.value = null
+        localVideo.value = null
         connState.value = null
         signalingUp.value = false
         babyBattery.value = null

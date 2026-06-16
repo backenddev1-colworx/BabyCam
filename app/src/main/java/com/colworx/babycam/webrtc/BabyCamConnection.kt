@@ -38,6 +38,7 @@ class BabyCamConnection(
     private val role: ConnRole,
     private val room: String,
     private val onRemoteVideo: (VideoTrack) -> Unit,
+    private val onLocalVideo: (VideoTrack) -> Unit = {},
     private val onRemoteAudio: (AudioTrack) -> Unit = {},
     private val onState: (PeerConnection.IceConnectionState) -> Unit = {},
     private val onSignalingUp: (Boolean) -> Unit = {},
@@ -61,6 +62,12 @@ class BabyCamConnection(
             session.initialize()
             if (role == ConnRole.BABY) {
                 session.startCamera(useFront = false)
+                val track = session.localVideoTrack
+                if (track != null) {
+                    onLocalVideo(track)
+                } else {
+                    Log.e(TAG, "Baby: camera capturer unavailable — no local video track created")
+                }
                 session.startAudio()
             }
             signaling.connect(
