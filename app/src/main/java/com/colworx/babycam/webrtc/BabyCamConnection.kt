@@ -44,6 +44,7 @@ class BabyCamConnection(
     private val onSignalingUp: (Boolean) -> Unit = {},
     private val onBatteryUpdate: (Int) -> Unit = {},
     private val onCryAlert: () -> Unit = {},
+    private val onTorchState: (Boolean) -> Unit = {},
 ) : WebRtcSession.Listener {
 
     private val selfId = UUID.randomUUID().toString().take(8)
@@ -158,6 +159,10 @@ class BabyCamConnection(
                 val on = msg.payload == "on"
                 controlTorch(on)
             }
+            "switch_camera" -> if (role == ConnRole.BABY) {
+                Log.d(TAG, "Baby: switching camera by parent request")
+                session.switchCamera()
+            }
             "offer" -> if (role == ConnRole.PARENT) {
                 Log.d(TAG, "Parent: received offer, creating answer")
                 session.setRemoteDescription(SessionDescription(SessionDescription.Type.OFFER, msg.payload))
@@ -191,6 +196,9 @@ class BabyCamConnection(
                 CryNotifier.postCryAlert(context)
                 onCryAlert()
             }
+            "torch_state" -> if (role == ConnRole.PARENT) {
+                onTorchState(msg.payload == "on")
+            }
             else -> {}
         }
     }
@@ -200,7 +208,11 @@ class BabyCamConnection(
         if (role == ConnRole.PARENT) session.setLocalAudioEnabled(on)
     }
 
+    /** Local flip (only meaningful on the device that actually owns a camera, i.e. the baby). */
     fun switchCamera() = session.switchCamera()
+
+    /** Parent: ask the baby phone to flip its own front/back camera. */
+    fun requestRemoteCameraSwitch() = signaling.send("switch_camera", "")
 
     fun sendLullaby(sound: String) = signaling.send("lullaby", sound)
 
@@ -283,17 +295,30 @@ class BabyCamConnection(
         }
     }
 
+    /**
+     * Toggles the flash unit while the camera is already open for WebRTC capture. Some OEM
+     * camera HALs refuse torch changes while a capture session is active (CAMERA_IN_USE) — in
+     * that case we report the real (failed) state back to the parent so the UI doesn't show
+     * "Torch ON" when nothing actually turned on.
+     */
     private fun controlTorch(on: Boolean) {
         try {
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val cameraId = manager.cameraIdList.firstOrNull { id ->
                 manager.getCameraCharacteristics(id)
                     .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-            } ?: return
+            }
+            if (cameraId == null) {
+                Log.e(TAG, "Torch control failed: no camera with a flash unit")
+                signaling.send("torch_state", "off")
+                return
+            }
             manager.setTorchMode(cameraId, on)
             Log.d(TAG, "Torch ${if (on) "ON" else "OFF"}")
+            signaling.send("torch_state", if (on) "on" else "off")
         } catch (e: Exception) {
-            Log.e(TAG, "Torch control failed: ${e.message}")
+            Log.e(TAG, "Torch control failed (camera likely in use for streaming): ${e.message}")
+            signaling.send("torch_state", "off")
         }
     }
 

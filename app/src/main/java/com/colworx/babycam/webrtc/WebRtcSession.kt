@@ -1,6 +1,7 @@
 package com.colworx.babycam.webrtc
 
 import android.content.Context
+import android.media.AudioManager
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraVideoCapturer
@@ -65,6 +66,7 @@ class WebRtcSession(
     )
 
     fun initialize() {
+        configureAudioRouting()
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(appContext)
                 .createInitializationOptions()
@@ -130,6 +132,25 @@ class WebRtcSession(
     fun setLocalVideoEnabled(enabled: Boolean) { localVideoTrack?.setEnabled(enabled) }
     fun switchCamera() { videoCapturer?.switchCamera(null) }
 
+    /**
+     * Without this, Android routes WebRTC call audio through the earpiece at a much lower
+     * max volume — the classic "WebRTC audio is whisper-quiet on Android" gotcha. Force
+     * speakerphone + communication mode on both baby and parent so talk/listen is audible.
+     */
+    private fun configureAudioRouting() {
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.isSpeakerphoneOn = true
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+        audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVol, 0)
+    }
+
+    private fun restoreAudioRouting() {
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.isSpeakerphoneOn = false
+        audioManager.mode = AudioManager.MODE_NORMAL
+    }
+
     private fun createCameraCapturer(useFront: Boolean): CameraVideoCapturer? {
         val enumerator = Camera2Enumerator(appContext)
         val names = enumerator.deviceNames
@@ -176,6 +197,7 @@ class WebRtcSession(
         peerConnection?.close()
         peerConnection = null
         eglBase.release()
+        restoreAudioRouting()
     }
 
     private fun simpleSdpObserver(onCreate: ((SessionDescription) -> Unit)? = null) = object : SdpObserver {

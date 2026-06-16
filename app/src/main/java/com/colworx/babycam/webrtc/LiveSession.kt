@@ -60,11 +60,14 @@ object LiveSession {
             onSignalingUp = { signalingUp.value = it },
             onBatteryUpdate = { babyBattery.value = it },
             onCryAlert = { cryPing.value = cryPing.value + 1 },
+            onTorchState = { babyTorchOn.value = it },
         ).also { it.start() }
     }
 
     fun setTalking(on: Boolean) = connection?.setTalking(on) ?: Unit
-    fun switchCamera() = connection?.switchCamera() ?: Unit
+
+    /** Parent: ask the baby phone to flip its own front/back camera. */
+    fun switchCamera() = connection?.requestRemoteCameraSwitch() ?: Unit
     fun sendLullaby(sound: String) = connection?.sendLullaby(sound) ?: Unit
 
     fun setRemoteCamera(on: Boolean) {

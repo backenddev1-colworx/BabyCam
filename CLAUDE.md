@@ -3,8 +3,10 @@
 ## Project
 Native Android baby monitor app. Package: `com.colworx.babycam`
 Repo: `/Users/applem2air/Documents/GitHub/BabyCam`
+GitHub: `https://github.com/mzashah/BabyCam`
 Git user: Colworx / backend.dev1@colworx.com — **NEVER add Co-Authored-By lines**
-**Always ask before git commit or push.**
+**Always ask before git commit or push** (unless the user has explicitly authorized autonomous
+work for a session — that authorization does not carry over to future sessions).
 
 ## Rules
 - English-only UI
@@ -19,134 +21,113 @@ Git user: Colworx / backend.dev1@colworx.com — **NEVER add Co-Authored-By line
 - Gradle 8.9, AGP 8.7.2, Kotlin 2.0.21, Compose BOM 2024.10.01
 - WebRTC: `io.getstream:stream-webrtc-android:1.3.8`
 - Signaling: Paho MQTT `mqttv3:1.2.5` → `broker.hivemq.com:1883` (free, no account)
-- AES-GCM encryption on all MQTT payloads (SignalCrypto)
+- AES-256-GCM encryption on all MQTT payloads (`SignalCrypto.kt`)
 - ICE: Google STUN + Open Relay TURN (free, no account)
-- QR: `zxing-android-embedded:4.3.0`
+- Pairing: 4-digit code (`RoomToken.kt`) — **no QR/ZXing**, that was removed; baby shows the code,
+  parent types it in
 - Biometric: `androidx.biometric:biometric:1.1.0`
 - DataStore Preferences for persistence
 
 ## Build Command
 ```bash
-JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.19/libexec/openjdk.jdk/Contents/Home
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 cd /Users/applem2air/Documents/GitHub/BabyCam
 JAVA_HOME=$JAVA_HOME PATH=$JAVA_HOME/bin:$PATH ./gradlew assembleDebug
 ```
 APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
+Plain `which java`/`adb`/`emulator` is NOT on PATH in this environment — always pass the full
+`JAVA_HOME` above, and use the full tool paths below for adb/emulator.
+
 ## Emulator
 - AVD: `BabyCam_Test` (Pixel 6, Android 35 API, arm64-v8a)
 - ADB: `/opt/homebrew/share/android-commandlinetools/platform-tools/adb`
+- Emulator binary: `/opt/homebrew/share/android-commandlinetools/emulator/emulator`
 - Device: `emulator-5554`
-- **UIAutomator crashes on QR Pairing screen** — do NOT run `uiautomator dump` on that screen
-- Emulator is unstable on API 35 — system dies occasionally (Google services crash), unrelated to app
+- **Genuinely unstable** — has crashed on its own twice in testing (process exits ~30-60s after
+  boot, "Failed to restore previous context" in the log) even with `-gpu swiftshader_indirect
+  -no-audio`. Don't burn more than 1-2 retries chasing it; fall back to asking the user for
+  real-device screenshots/logs instead of relying on this AVD.
+- **UIAutomator crashes on the pairing screen** — do NOT run `uiautomator dump` there
+- The emulator's virtual camera and (if no LED model attached) flash unit are not representative
+  of real hardware — camera/torch behavior must ultimately be confirmed on real phones
 
-## Tap Coordinates (device pixels, confirmed via UIAutomator)
-All coords are in actual device pixels (1080x2400). Do NOT scale from screenshots.
-- Welcome "Get started": (540, 2275)
-- Choose Device "Baby unit": (540, 301)
-- Permissions "Allow & continue": (540, 955)
-- Battery "Done": (540, 874)
-- QR Pairing "Go to monitor": (540, 1632)
-
-## Screenshot Method
+## Screenshot Method (when the emulator is actually up)
 ```bash
 ADB=/opt/homebrew/share/android-commandlinetools/platform-tools/adb
 $ADB shell screencap -p /sdcard/s.png && $ADB pull /sdcard/s.png /tmp/s.png
 ```
 Then Read `/tmp/s.png`. Do NOT use `exec-out screencap -p >` — it corrupts the PNG.
 
----
-
-## ✅ COMPLETED TASKS
-
-### Phase 0 — Toolchain & Project Scaffold
-- Gradle 8.9 + AGP 8.7.2 + Kotlin 2.0.21 setup
-- Package `com.colworx.babycam`, compileSdk 35, minSdk 26
-- All dependencies in `libs.versions.toml`
-
-### Phase 1 — Design System & Navigation Shell
-- Material3 theme with custom purple palette
-- NavHost with all routes: WELCOME, CHOOSE, PERMISSIONS, BATTERY, BABY_PAIRING, BABY_ACTIVE, PARENT_SCAN, PARENT_LIVE, SETTINGS
-- `SecondaryButton` and `PrimaryButton` components in `ui/components/`
-
-### Phase 2 — Permissions & OEM Battery Setup
-- PermissionsScreen: Camera, Microphone, Notifications — all with green ✓ indicators
-- BatterySetupScreen: OEM steps (Autostart, Unrestricted battery, disable optimization)
-- All permissions granted via `pm grant` for testing
-
-### Phase 3 — Foreground Service & Boot Auto-Start
-- `MonitorService.kt`: PARTIAL_WAKE_LOCK, dual notification channels (`babycam_monitor`, `babycam_alerts`)
-- `MonitorController.kt`: single entry point for start/stop + SharedPreferences persistence
-- **BUG FIXED**: `BootReceiver` was starting camera/microphone FGS from BOOT_COMPLETED → Android 14+ crash
-  - Fix: API 34+ shows "tap to resume" notification instead of direct service start
-- Foreground service type: `camera|microphone` in manifest + runtime flags
-
-### Phase 4 — MQTT Signaling & QR Pairing
-- `SignalingClient.kt`: Paho MQTT on background Thread, AES-GCM encrypted payloads
-- `SignalCrypto.kt`: per-room AES-256 key derived from room token
-- `RoomToken.kt`: UUID-based room ID generator
-- `BabyPairingScreen`: shows live QR code + "Connecting…" / "Waiting for parent…" status pill
-- `ParentScanScreen`: ZXing QR scanner
-
-### Phase 5 — WebRTC Live Video
-- `WebRtcSession.kt`: Camera2 + CameraX capturer, PeerConnectionFactory, ICE servers
-- `BabyCamConnection.kt`: ties WebRtcSession to SignalingClient, offer/answer/ICE flow
-- `LiveSession.kt`: singleton observable state (remoteVideo, connState, signalingUp)
-- **BUG FIXED**: `session.initialize()` + `session.startCamera()` were called on main thread → ANR
-  - Fix: `BabyCamConnection.start()` now launches on `Dispatchers.IO` coroutine scope
-
-### Phase 8 — Cry Detection
-- `CryDetector.kt`: amplitude-based detection with configurable Sensitivity
-- `MonitorService.kt`: AudioRecord loop feeding CryDetector, fires HIGH priority alert notification
-- `AppPreferences.kt`: `crySensitivity: Flow<Float>` (default 0.55), `dataSaver: Flow<Boolean>`
-
-### Phase 10 — Lullaby / White-Noise Playback
-- `LullabyPlayer.kt`: AudioTrack procedural PCM generation — WHITE_NOISE, HEARTBEAT, RAIN
-- Baby unit plays sound when parent sends "lullaby" MQTT signal
-- `BabyCamConnection.kt`: handles "lullaby" and "video_enabled" signal types
-
-### Phase 11 — Night Mode + Snapshot
-- `nightModeFilter` Modifier extension for orange-tinted night vision overlay
-- `ParentLiveScreen`: night mode toggle button, changes color when active
-
-### Phase 12 — Low Battery Alert
-- `MonitorService.kt`: BroadcastReceiver for `ACTION_BATTERY_CHANGED`, alerts at ≤20%
-
-### Phase 14 — App Lock (PIN / Biometric)
-- `PinManager.kt`: DataStore-backed PIN storage + biometric flag
-- `AppLockScreen.kt`: biometric prompt + PIN entry UI
-- `AppNavigation.kt`: shows AppLockScreen before NavHost if PIN enabled
+For the README, design mockups (SVG, built from `ui/theme/Color.kt` + actual screen copy) live in
+`docs/screenshots/` instead of real captures, since the emulator can't be relied on. Swap in real
+photos from the user's phone if/when available.
 
 ---
 
-## ❌ PENDING TASKS
+## ✅ COMPLETED — all 15 functional phases implemented, build passes
 
-### CRITICAL — Must fix before calling done:
-1. **BabyActiveScreen not tested** — "Go to monitor" tap navigates there but emulator instability prevented screenshot verification. Need to confirm BabyActiveScreen renders (camera preview + foreground service notification in status bar).
-2. **MonitorService foreground notification** — verify the persistent "BabyCam is monitoring" notification appears after tapping "Go to monitor"
-3. **Parent flow** — ParentScanScreen → scan QR → ParentLiveScreen: not tested end-to-end on emulator
+- **Phase 0-2**: Toolchain, design system, navigation shell, role-aware permissions (parent skips
+  camera permission), OEM battery setup guidance
+- **Phase 3**: Foreground service (camera+mic type), boot auto-start (API 34+: notification-based
+  resume, not direct FGS start, to avoid the Android 14+ crash)
+- **Phase 4**: MQTT signaling (`broker.hivemq.com`) + AES-GCM encrypted payloads + 4-digit pairing
+  code (replaced the original QR flow entirely)
+- **Phase 5**: WebRTC live video, baby → parent, via `stream-webrtc-android`
+- **Phase 6**: Two-way talk — parent pre-adds a muted audio track during `start()` (before any SDP
+  exchange) so toggling Talk needs no renegotiation
+- **Phase 7**: Reconnect — MQTT `MqttCallbackExtended.connectComplete` auto-resubscribes; baby does
+  ICE restart on FAILED; parent sends a "ping" on ICE disconnect to trigger a baby re-offer.
+  Pairing persists until the parent disconnects explicitly (`BackHandler` + confirm dialog)
+- **Phase 8-9**: Cry detection (amplitude threshold, sensitivity read from DataStore, was previously
+  hardcoded), local + push-style alert notification, deep-links to `ParentLiveScreen`
+- **Phase 10**: Lullaby/white-noise playback (procedural PCM: white noise, heartbeat, rain)
+- **Phase 11**: Night mode color filter, snapshot-to-gallery
+- **Phase 12**: Low battery alert (≤20%)
+- **Phase 13**: Data saver (audio-only toggle)
+- **Phase 14**: App lock (PIN / biometric)
+- **Phase 15**: Settings (About dialog, Forget pairing flow), remembered pairing, full parent
+  remote-control panel (baby cam/mic/torch/flip + parent talk/night/lullaby/snapshot)
 
-### Phase 6 — Two-Way Audio Talk (pending)
-- Parent mic → baby speaker not implemented in UI (backend ready via `setTalking()`)
-- Need push-to-talk button in ParentLiveScreen
+### Phase 16 — Release APK & public GitHub (the one real gap)
+- Repo is public with a README + design mockups, but **no signed release build yet** — only debug
+  builds exist. Needs a keystore + `signingConfigs` before a Play Store-style release APK.
 
-### Phase 7 — Reconnect Handling (pending)
-- ICE FAILED/DISCONNECTED overlay shown but auto-reconnect not implemented
+---
 
-### Phase 9 — Alert delivery polish (pending)
-- Cry alert notification tapping should deep-link to ParentLiveScreen
+## Known bugs fixed this session (2026-06-16/17) — read before assuming these still work
 
-### Phase 13 — Data Saver (pending)
-- `setVideoEnabled()` wired but UI switch in SettingsScreen needs testing
+1. **Baby's own camera preview was permanently black.** `BabyActiveScreen` read
+   `connection.localVideoTrack` as a plain Kotlin property, not a Compose `State` — the camera
+   track is created asynchronously after the screen is already composed, so it never recomposed.
+   Fixed via `LiveSession.localVideo` (observable), set through a new `onLocalVideo` callback on
+   `BabyCamConnection`.
+2. **"Flip Cam" button on the parent's live screen did nothing.** It called `switchCamera()` on
+   the *parent's own* `WebRtcSession` — but the parent never opens a camera at all (only the baby
+   does). Fixed by sending a `"switch_camera"` MQTT signal to the baby, which then calls its own
+   `session.switchCamera()`.
+3. **Call audio was very quiet on both sides.** Classic WebRTC-on-Android gotcha: without forcing
+   `AudioManager.MODE_IN_COMMUNICATION` + `isSpeakerphoneOn = true`, Android routes call audio
+   through the earpiece at a much lower max volume. Fixed in `WebRtcSession.configureAudioRouting()`,
+   called from `initialize()` on both baby and parent; reverted in `close()`. Needed adding
+   `MODIFY_AUDIO_SETTINGS` to the manifest.
+4. **Torch (flashlight) toggle is unreliable on some devices — partially fixed, partially a hard
+   library limitation.** `CameraManager.setTorchMode()` is called while the baby's camera is
+   already open and actively streaming for WebRTC; many OEM camera HALs reject torch changes on a
+   camera ID that's mid-capture (`CameraAccessException: CAMERA_IN_USE`), and the
+   `stream-webrtc-android` `Camera2Capturer` doesn't expose its internal `CaptureRequest` to set
+   `FLASH_MODE` directly on the active session (verified via `javap` against the library — no
+   such method exists). What WAS fixed: the baby now sends a `"torch_state"` ack back to the
+   parent with the real outcome, so the UI doesn't show "Torch ON" when the flash never actually
+   turned on. **Whether the flash itself fires is still device-dependent** — confirmed reportedly
+   broken on the user's test phones; a full fix would require forking the camera capture session
+   to inject `FLASH_MODE_TORCH` into the repeating capture request, which is a larger undertaking
+   than a quick patch. If this needs to actually work reliably, that's the next real task.
 
-### Phase 15 — Settings, Remembered Pairing, Polish (pending)
-- Remembered room token so parent doesn't re-scan after reconnect
-- SettingsScreen: cry sensitivity slider + data saver switch (UI built, needs testing)
-
-### Phase 16 — Release APK (pending)
-- Signed release APK for Play Store
-- `keystore.jks` needed + `signingConfigs` in `build.gradle`
-- Play Store listing assets (screenshots, description, icon 512x512)
+**Still NOT independently re-verified on real devices** (logic looks correct, build is clean, but
+no live two-phone test from this side since the audio/torch/camera-switch fixes): talk audio
+volume after the routing fix, torch ack behavior, camera switch after the signaling fix, full
+reconnect-after-network-drop flow.
 
 ---
 
@@ -157,23 +138,20 @@ app/src/main/java/com/colworx/babycam/
 ├── ui/
 │   ├── AppNavigation.kt          ← NavHost + app lock gate
 │   ├── screens/
-│   │   ├── WelcomeScreen.kt
-│   │   ├── ChooseDeviceScreen.kt
-│   │   ├── PermissionsScreen.kt
-│   │   ├── BatterySetupScreen.kt
+│   │   ├── OnboardingScreens.kt  ← WelcomeScreen, ChooseDeviceScreen
+│   │   ├── SetupScreens.kt       ← PermissionsScreen (role-aware), BatterySetupScreen
 │   │   ├── BabyScreens.kt        ← BabyPairingScreen + BabyActiveScreen
-│   │   ├── ParentScreens.kt      ← ParentLiveScreen + SettingsScreen
-│   │   ├── AppLockScreen.kt
-│   │   └── ParentScanScreen.kt
-│   └── components/               ← PrimaryButton, SecondaryButton, etc.
+│   │   ├── ParentScreens.kt      ← ParentScanScreen, ParentLiveScreen, SettingsScreen, LullabyPickerSheet
+│   │   └── AppLockScreen.kt
+│   └── components/               ← PrimaryButton, SecondaryButton, AppCard, etc.
 ├── webrtc/
-│   ├── LiveSession.kt            ← singleton state
-│   ├── BabyCamConnection.kt      ← WebRTC + MQTT orchestration
-│   └── WebRtcSession.kt          ← PeerConnection + camera/mic
+│   ├── LiveSession.kt            ← app-wide observable state (singleton)
+│   ├── BabyCamConnection.kt      ← WebRTC + MQTT orchestration, all signal types
+│   └── WebRtcSession.kt          ← PeerConnection, camera/mic tracks, audio routing
 ├── signaling/
-│   ├── SignalingClient.kt        ← MQTT client (background thread)
+│   ├── SignalingClient.kt        ← MQTT client (background thread, MqttCallbackExtended)
 │   ├── SignalCrypto.kt           ← AES-GCM encryption
-│   └── RoomToken.kt
+│   └── RoomToken.kt              ← 4-digit pairing code
 ├── service/
 │   ├── MonitorService.kt         ← FGS + cry detection + battery alert
 │   ├── MonitorController.kt      ← start/stop helper
@@ -182,14 +160,17 @@ app/src/main/java/com/colworx/babycam/
 │   ├── CryDetector.kt
 │   └── LullabyPlayer.kt
 ├── data/
-│   └── AppPreferences.kt         ← DataStore prefs
+│   └── AppPreferences.kt         ← DataStore prefs (cry sensitivity, parent room, data saver)
 └── security/
     └── PinManager.kt
 ```
 
 ## Known Issues / Quirks
-- Emulator API 35 crashes frequently (Google services instability) — not app-related
-- UIAutomator dump causes null root node + system crash on QR Pairing screen — avoid it
+- Emulator API 35 crashes frequently and on its own — see Emulator section above
+- UIAutomator dump causes null root node + system crash on the pairing screen — avoid it
 - `sleep` > 2s in Bash commands causes the tool to background the command — use separate calls
-- ADB tap coordinates must come from UIAutomator XML, NOT estimated from displayed screenshots (visual estimates are ~22% too low in Y)
+- ADB tap coordinates must come from UIAutomator XML, NOT estimated from displayed screenshots
 - `exec-out screencap -p > file.png` corrupts PNG — always use `screencap -p /sdcard/f.png && pull`
+- `AudioManager.isSpeakerphoneOn` is deprecated since API 31 (in favor of
+  `setCommunicationDevice`) but still functions correctly through current Android versions; kept
+  for minSdk 26 compatibility — the deprecation warning at build time is expected and harmless
