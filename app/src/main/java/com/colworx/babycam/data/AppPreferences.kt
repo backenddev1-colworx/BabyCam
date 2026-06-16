@@ -9,10 +9,19 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import org.json.JSONArray
+import org.json.JSONObject
 
 val Context.dataStore by preferencesDataStore(name = "babycam_prefs")
 
 enum class Role { NONE, BABY, PARENT }
+
+/** A baby profile the parent has paired with, kept locally (no backend/account). */
+data class SavedBaby(
+    val room: String,
+    val name: String,
+    val lastActiveAt: Long,
+)
 
 class AppPreferences(private val context: Context) {
 
@@ -21,6 +30,8 @@ class AppPreferences(private val context: Context) {
     private val dataSaverKey = booleanPreferencesKey("data_saver")
     private val parentRoomKey = stringPreferencesKey("parent_room")
     private val babyRoomKey = stringPreferencesKey("baby_room")
+    private val savedBabiesKey = stringPreferencesKey("saved_babies")
+    private val lastVisitedViewKey = stringPreferencesKey("last_visited_view")
 
     val role: Flow<Role> = context.dataStore.data.map { prefs ->
         when (prefs[roleKey]) {
@@ -39,9 +50,23 @@ class AppPreferences(private val context: Context) {
         prefs[dataSaverKey] ?: false
     }
 
-    /** The last paired baby room remembered for the parent, or null if none saved. */
+    /** The currently-active baby room for the parent (last one viewed), or null if none. */
     val parentRoom: Flow<String?> = context.dataStore.data.map { prefs ->
         prefs[parentRoomKey]
+    }
+
+    /** All babies the parent has ever paired with, most-recently-active first. */
+    val savedBabies: Flow<List<SavedBaby>> = context.dataStore.data.map { prefs ->
+        parseBabies(prefs[savedBabiesKey]).sortedByDescending { it.lastActiveAt }
+    }
+
+    /**
+     * Which top-level screen the user was last on ("baby_active" / "parent_live"), so a hard
+     * kill + relaunch can resume there instead of resetting to the welcome screen. Null means
+     * no active session worth resuming (e.g. the user explicitly disconnected/stopped).
+     */
+    val lastVisitedView: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[lastVisitedViewKey]
     }
 
     suspend fun setRole(role: Role) {
@@ -56,14 +81,98 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit { it[dataSaverKey] = on }
     }
 
-    /** Remembers [room] as the parent's last paired baby for one-tap reconnect. */
+    /** Remembers [room] as the parent's currently-active baby for one-tap reconnect. */
     suspend fun setParentRoom(room: String) {
         context.dataStore.edit { it[parentRoomKey] = room }
     }
 
-    /** Forgets the remembered parent pairing. */
+    /** Forgets the remembered active-baby room (used when no babies are saved anymore). */
     suspend fun clearParentRoom() {
         context.dataStore.edit { it.remove(parentRoomKey) }
+    }
+
+    suspend fun setLastVisitedView(view: String?) {
+        context.dataStore.edit { prefs ->
+            if (view == null) prefs.remove(lastVisitedViewKey) else prefs[lastVisitedViewKey] = view
+        }
+    }
+
+    /** Adds a new saved baby (or refreshes [name] + activity time if [room] is already saved). */
+    suspend fun upsertBaby(room: String, name: String, activeNow: Long) {
+        context.dataStore.edit { prefs ->
+            val babies = parseBabies(prefs[savedBabiesKey]).toMutableList()
+            val idx = babies.indexOfFirst { it.room == room }
+            val entry = SavedBaby(room = room, name = name, lastActiveAt = activeNow)
+            if (idx >= 0) babies[idx] = entry else babies.add(entry)
+            prefs[savedBabiesKey] = serializeBabies(babies)
+        }
+    }
+
+    /** Bumps [room]'s last-active timestamp without changing its name. */
+    suspend fun touchBaby(room: String, activeNow: Long) {
+        context.dataStore.edit { prefs ->
+            val babies = parseBabies(prefs[savedBabiesKey]).toMutableList()
+            val idx = babies.indexOfFirst { it.room == room }
+            if (idx >= 0) {
+                babies[idx] = babies[idx].copy(lastActiveAt = activeNow)
+                prefs[savedBabiesKey] = serializeBabies(babies)
+            }
+        }
+    }
+
+    /**
+     * One-time migration for installs that paired before multi-baby support existed: if a
+     * legacy [parentRoomKey] is set but isn't in the saved-babies list yet, adopt it as "Baby 1"
+     * so existing users aren't asked to re-enter their pairing code.
+     */
+    suspend fun migrateLegacyParentRoomIfNeeded() {
+        val data = context.dataStore.data.first()
+        val legacyRoom = data[parentRoomKey] ?: return
+        val existing = parseBabies(data[savedBabiesKey])
+        if (existing.none { it.room == legacyRoom }) {
+            upsertBaby(legacyRoom, "Baby 1", System.currentTimeMillis())
+        }
+    }
+
+    /** Removes [room] from the saved-babies list. */
+    suspend fun removeBaby(room: String) {
+        context.dataStore.edit { prefs ->
+            val babies = parseBabies(prefs[savedBabiesKey]).filterNot { it.room == room }
+            prefs[savedBabiesKey] = serializeBabies(babies)
+            if (prefs[parentRoomKey] == room) prefs.remove(parentRoomKey)
+        }
+    }
+
+    private fun parseBabies(json: String?): List<SavedBaby> {
+        if (json.isNullOrBlank()) return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                SavedBaby(
+                    room = o.getString("room"),
+                    name = o.getString("name"),
+                    lastActiveAt = o.optLong("lastActiveAt", 0L),
+                )
+            }
+        } catch (_: Exception) {
+            // Corrupt/old-format data — treat as no saved babies rather than crash.
+            emptyList()
+        }
+    }
+
+    private fun serializeBabies(babies: List<SavedBaby>): String {
+        val arr = JSONArray()
+        babies.forEach { b ->
+            arr.put(
+                JSONObject().apply {
+                    put("room", b.room)
+                    put("name", b.name)
+                    put("lastActiveAt", b.lastActiveAt)
+                }
+            )
+        }
+        return arr.toString()
     }
 
     /**

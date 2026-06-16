@@ -1,8 +1,6 @@
 package com.colworx.babycam.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -22,23 +20,26 @@ private val LightColors = lightColorScheme(
     error = AlertRed,
 )
 
-private val DarkColors = darkColorScheme(
-    primary = Indigo,
-    onPrimary = White,
-    background = NightBg,
-    onBackground = NightText,
-    surface = NightSurface,
-    onSurface = NightText,
-    error = AlertRed,
-)
-
+/**
+ * Every screen in this app hardcodes the brand's light palette (Lavender/Indigo) directly —
+ * only the always-on-dark live-view screen uses the Night* colors, by deliberate design (a
+ * camera-viewfinder look), not as a system dark-mode response. There is no real dark theme for
+ * the rest of the app.
+ *
+ * Previously this followed `isSystemInDarkTheme()`, which swapped MaterialTheme's colorScheme to
+ * a dark one when the phone was in system dark mode — but only *default Material3 components*
+ * (dialogs, switches, dropdowns, text field indicators, etc.) read that scheme; every custom
+ * screen kept its hardcoded light backgrounds. The result was dark-styled system widgets sitting
+ * on top of light hardcoded screens — a visible color clash ("screen kharab"). Pinning to
+ * [LightColors] unconditionally keeps the whole app visually consistent regardless of the
+ * phone's system theme setting.
+ */
 @Composable
 fun BabyCamTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = LightColors,
         typography = BabyCamTypography,
         content = content
     )

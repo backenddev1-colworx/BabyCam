@@ -12,17 +12,28 @@ import org.webrtc.VideoTrack
 import org.webrtc.YuvHelper
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Captures a single frame from a live [VideoTrack] and decodes it into a [Bitmap].
  *
  * A one-shot [VideoSink] is attached to the track; the first frame it receives is
- * converted (I420 -> NV21 -> JPEG -> Bitmap), rotated to its display orientation,
- * then the sink detaches itself. All native buffers are released; any failure
- * yields a null bitmap rather than throwing.
+ * retained (its buffer ref-counted up) and handed off to a background thread for
+ * conversion (I420 -> NV21 -> JPEG -> Bitmap) + rotation, then the sink detaches
+ * itself. All native buffers are released; any failure yields a null bitmap rather
+ * than throwing.
+ *
+ * IMPORTANT: the [VideoSink] callback runs on WebRTC's frame-delivery thread, which
+ * is shared with the SurfaceViewRenderer that draws the live preview. Doing the JPEG
+ * encode/decode synchronously there blocked that thread for 40+ seconds on a real
+ * device (zero frames rendered, then an ANR + force-kill by the system) — so the
+ * heavy work is dispatched to [executor] and only a cheap frame retain/release
+ * happens inline.
  */
 object FrameCapture {
+
+    private val executor = Executors.newSingleThreadExecutor()
 
     fun capture(track: VideoTrack, onBitmap: (Bitmap?) -> Unit) {
         val captured = AtomicBoolean(false)
@@ -32,7 +43,16 @@ object FrameCapture {
             if (!captured.compareAndSet(false, true)) return@VideoSink
             // Detach immediately so the track stops feeding us frames.
             sink?.let { track.removeSink(it) }
-            onBitmap(toBitmap(frame))
+            // Keep the frame alive past this callback (it's only valid for its
+            // duration otherwise), then do the heavy conversion off-thread.
+            frame.retain()
+            executor.execute {
+                try {
+                    onBitmap(toBitmap(frame))
+                } finally {
+                    frame.release()
+                }
+            }
         }
         track.addSink(sink)
     }

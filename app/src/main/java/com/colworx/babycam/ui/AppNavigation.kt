@@ -2,6 +2,7 @@ package com.colworx.babycam.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +21,7 @@ import com.colworx.babycam.ui.screens.BabyActiveScreen
 import com.colworx.babycam.ui.screens.BabyPairingScreen
 import com.colworx.babycam.ui.screens.BatterySetupScreen
 import com.colworx.babycam.ui.screens.ChooseDeviceScreen
+import com.colworx.babycam.ui.screens.ParentBabyListScreen
 import com.colworx.babycam.ui.screens.ParentLiveScreen
 import com.colworx.babycam.ui.screens.ParentScanScreen
 import com.colworx.babycam.ui.screens.PermissionsScreen
@@ -37,6 +39,7 @@ object Routes {
     const val BABY_PAIRING = "baby_pairing"
     const val BABY_ACTIVE = "baby_active"
     const val PARENT_SCAN = "parent_scan"
+    const val PARENT_BABIES = "parent_babies"
     const val PARENT_LIVE = "parent_live"
     const val SETTINGS = "settings"
 }
@@ -56,13 +59,40 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
     }
 
     // Cry-alert deep link: jump straight to the live view if a pairing is remembered.
+    // Otherwise, resume exactly where the user left off before a hard kill (state persistence).
     LaunchedEffect(startAtParentLive) {
         if (startAtParentLive) {
             val savedRoom = prefs.parentRoom.first()
             if (savedRoom != null) {
+                prefs.setLastVisitedView(Routes.PARENT_LIVE)
                 LiveSession.startParent(context, savedRoom)
                 nav.navigate(Routes.PARENT_LIVE)
             }
+            return@LaunchedEffect
+        }
+        try {
+            prefs.migrateLegacyParentRoomIfNeeded()
+            val role = prefs.role.first()
+            val lastView = prefs.lastVisitedView.first()
+            when {
+                role == Role.BABY && lastView == Routes.BABY_ACTIVE -> {
+                    val room = prefs.babyRoomOnce()
+                    LiveSession.startBaby(context, room)
+                    MonitorController.start(context)
+                    nav.navigate(Routes.BABY_ACTIVE) { popUpTo(Routes.WELCOME) { inclusive = false } }
+                }
+                role == Role.PARENT && lastView == Routes.PARENT_LIVE -> {
+                    val room = prefs.parentRoom.first()
+                    if (room != null) {
+                        LiveSession.startParent(context, room)
+                        nav.navigate(Routes.PARENT_LIVE) { popUpTo(Routes.WELCOME) { inclusive = false } }
+                    } else {
+                        prefs.setLastVisitedView(null)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Saved state missing/corrupt — fall back to the normal welcome flow rather than crash.
         }
     }
 
@@ -94,12 +124,11 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                 if (pendingRole == Role.BABY) {
                     nav.navigate(Routes.BATTERY)
                 } else {
-                    // Parent: skip scanning if a pairing is already remembered.
+                    // Parent: jump to the babies dashboard if any are saved, else first pairing.
                     scope.launch {
-                        val savedRoom = prefs.parentRoom.first()
-                        if (savedRoom != null) {
-                            LiveSession.startParent(context, savedRoom)
-                            nav.navigate(Routes.PARENT_LIVE)
+                        val babies = prefs.savedBabies.first()
+                        if (babies.isNotEmpty()) {
+                            nav.navigate(Routes.PARENT_BABIES)
                         } else {
                             nav.navigate(Routes.PARENT_SCAN)
                         }
@@ -120,6 +149,7 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                 BabyPairingScreen(
                     room = loadedRoom,
                     onContinue = {
+                        scope.launch { prefs.setLastVisitedView(Routes.BABY_ACTIVE) }
                         MonitorController.start(context)
                         nav.navigate(Routes.BABY_ACTIVE)
                     },
@@ -130,6 +160,7 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
         composable(Routes.BABY_ACTIVE) {
             BabyActiveScreen(
                 onStop = {
+                    scope.launch { prefs.setLastVisitedView(null) }
                     LiveSession.stop()
                     MonitorController.stop(context)
                     nav.popBackStack(Routes.CHOOSE, false)
@@ -139,19 +170,43 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
         }
         composable(Routes.PARENT_SCAN) {
             ParentScanScreen(onScanned = { token ->
-                scope.launch { prefs.setParentRoom(token) }
+                scope.launch {
+                    prefs.upsertBaby(token, "Baby ${prefs.savedBabies.first().size + 1}", System.currentTimeMillis())
+                    prefs.setParentRoom(token)
+                    prefs.setLastVisitedView(Routes.PARENT_LIVE)
+                }
                 LiveSession.startParent(context, token)
-                nav.navigate(Routes.PARENT_LIVE)
+                nav.navigate(Routes.PARENT_LIVE) {
+                    popUpTo(Routes.PARENT_SCAN) { inclusive = true }
+                }
             })
+        }
+        composable(Routes.PARENT_BABIES) {
+            val babies by prefs.savedBabies.collectAsState(initial = emptyList())
+            ParentBabyListScreen(
+                babies = babies,
+                onSelectBaby = { baby ->
+                    scope.launch {
+                        prefs.setParentRoom(baby.room)
+                        prefs.touchBaby(baby.room, System.currentTimeMillis())
+                        prefs.setLastVisitedView(Routes.PARENT_LIVE)
+                    }
+                    LiveSession.startParent(context, baby.room)
+                    nav.navigate(Routes.PARENT_LIVE)
+                },
+                onAddBaby = { nav.navigate(Routes.PARENT_SCAN) },
+                onSettings = { nav.navigate(Routes.SETTINGS) },
+            )
         }
 
         composable(Routes.PARENT_LIVE) {
             ParentLiveScreen(
                 onSettings = { nav.navigate(Routes.SETTINGS) },
                 onDisconnect = {
+                    scope.launch { prefs.setLastVisitedView(null) }
                     LiveSession.stop()
-                    nav.navigate(Routes.CHOOSE) {
-                        popUpTo(Routes.WELCOME) { inclusive = false }
+                    nav.navigate(Routes.PARENT_BABIES) {
+                        popUpTo(Routes.PARENT_LIVE) { inclusive = true }
                     }
                 }
             )
@@ -160,9 +215,15 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
             SettingsScreen(
                 onBack = { nav.popBackStack() },
                 onForgetPairing = {
-                    scope.launch { prefs.clearParentRoom() }
-                    nav.navigate(Routes.PARENT_SCAN) {
-                        popUpTo(Routes.PARENT_LIVE) { inclusive = true }
+                    scope.launch {
+                        val activeRoom = prefs.parentRoom.first()
+                        if (activeRoom != null) prefs.removeBaby(activeRoom)
+                        prefs.clearParentRoom()
+                        prefs.setLastVisitedView(null)
+                    }
+                    LiveSession.stop()
+                    nav.navigate(Routes.PARENT_BABIES) {
+                        popUpTo(Routes.WELCOME) { inclusive = false }
                     }
                 }
             )

@@ -177,14 +177,10 @@ class BabyCamConnection(
             }
             "ice" -> parseIce(msg.payload)?.let { session.addRemoteIceCandidate(it) }
             "lullaby" -> if (role == ConnRole.BABY) {
+                // The parent UI now sends only "bell" (ring) / "stop". The loud alarm-stream
+                // bell needs the app context to max out the alarm volume.
                 if (msg.payload == "stop") LullabyPlayer.stop()
-                else LullabyPlayer.play(
-                    when (msg.payload) {
-                        "heartbeat" -> LullabyPlayer.Sound.HEARTBEAT
-                        "rain" -> LullabyPlayer.Sound.RAIN
-                        else -> LullabyPlayer.Sound.WHITE_NOISE
-                    }
-                )
+                else LullabyPlayer.play(LullabyPlayer.Sound.BELL, context.applicationContext)
             }
             "video_enabled" -> if (role == ConnRole.BABY) {
                 session.localVideoTrack?.setEnabled(msg.payload == "true")

@@ -36,7 +36,8 @@ import androidx.compose.material.icons.outlined.FlashOn
 import androidx.compose.material.icons.outlined.FlipCameraAndroid
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MicOff
-import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Settings
@@ -209,7 +210,7 @@ fun ParentLiveScreen(
 
     var talking by remember { mutableStateOf(false) }
     var nightMode by remember { mutableStateOf(false) }
-    var showLullaby by remember { mutableStateOf(false) }
+    var bellRinging by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
 
     // Elapsed time since screen opened
@@ -275,33 +276,6 @@ fun ParentLiveScreen(
                     contentDescription = null,
                     modifier = Modifier.size(64.dp),
                     tint = Color(0xFF2C2850)
-                )
-            }
-        }
-
-        // Lullaby picker overlay
-        if (showLullaby) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x99000000))
-                    .clickable { showLullaby = false },
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                LullabyPickerSheet(
-                    onSelect = { sound ->
-                        val tag = when (sound) {
-                            "Heartbeat" -> "heartbeat"
-                            "Rain" -> "rain"
-                            else -> "white_noise"
-                        }
-                        LiveSession.sendLullaby(tag)
-                        showLullaby = false
-                    },
-                    onStop = {
-                        LiveSession.sendLullaby("stop")
-                        showLullaby = false
-                    }
                 )
             }
         }
@@ -478,9 +452,15 @@ fun ParentLiveScreen(
                     fg = if (nightMode) Color(0xFF4CAF50) else NightText
                 )
                 RoundControl(
-                    icon = Icons.Outlined.MusicNote,
-                    label = "Lullaby",
-                    onClick = { showLullaby = true }
+                    icon = if (bellRinging) Icons.Outlined.NotificationsActive
+                           else Icons.Outlined.Notifications,
+                    label = if (bellRinging) "Bell ON" else "Ring bell",
+                    onClick = {
+                        bellRinging = !bellRinging
+                        LiveSession.sendLullaby(if (bellRinging) "bell" else "stop")
+                    },
+                    bg = if (bellRinging) Color(0xFF3A2D00) else Color(0x33FFFFFF),
+                    fg = if (bellRinging) Color(0xFFFFD54F) else NightText
                 )
                 RoundControl(
                     icon = Icons.Outlined.PhotoCamera,
@@ -501,90 +481,6 @@ fun ParentLiveScreen(
 
             Spacer(Modifier.height(4.dp))
         }
-    }
-}
-
-// 3) Lullaby picker sheet ----------------------------------------------------
-
-@Composable
-fun LullabyPickerSheet(onSelect: (String) -> Unit = {}, onStop: () -> Unit = {}) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .background(Lavender50, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .width(36.dp)
-                .height(4.dp)
-                .background(Color(0xFFBDBDBD), RoundedCornerShape(2.dp))
-        )
-        Spacer(Modifier.height(16.dp))
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "Play a sound",
-                style = MaterialTheme.typography.titleMedium,
-                color = Indigo900
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Plays on the baby unit",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Muted
-            )
-            Spacer(Modifier.height(16.dp))
-
-            SoundRow("Soft lullaby", Icons.Outlined.MusicNote, selected = true) { onSelect("Soft lullaby") }
-            Spacer(Modifier.height(10.dp))
-            SoundRow("White noise", Icons.Outlined.Air, selected = false) { onSelect("White noise") }
-            Spacer(Modifier.height(10.dp))
-            SoundRow("Heartbeat", Icons.Outlined.Favorite, selected = false) { onSelect("Heartbeat") }
-            Spacer(Modifier.height(10.dp))
-            SoundRow("Rain", Icons.Outlined.Cloud, selected = false) { onSelect("Rain") }
-            Spacer(Modifier.height(16.dp))
-            SecondaryButton(text = "Stop sound", onClick = onStop, modifier = Modifier.fillMaxWidth())
-        }
-    }
-}
-
-@Composable
-private fun SoundRow(
-    name: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    val shape = RoundedCornerShape(14.dp)
-    val rowModifier = if (selected) {
-        Modifier
-            .fillMaxWidth()
-            .background(IndigoDeep, shape)
-    } else {
-        Modifier
-            .fillMaxWidth()
-            .background(Color.White, shape)
-            .border(1.dp, Lavender100, shape)
-    }
-    Row(
-        modifier = rowModifier
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (selected) Color.White else IndigoDeep
-        )
-        Text(
-            text = name,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (selected) Color.White else Indigo900
-        )
     }
 }
 
@@ -825,12 +721,6 @@ private fun ParentScanScreenPreview() {
 @Composable
 private fun ParentLiveScreenPreview() {
     BabyCamTheme { ParentLiveScreen() }
-}
-
-@Preview
-@Composable
-private fun LullabyPickerSheetPreview() {
-    BabyCamTheme { LullabyPickerSheet() }
 }
 
 @Preview

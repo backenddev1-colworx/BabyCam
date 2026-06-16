@@ -26,6 +26,9 @@ fun VideoRenderer(
     mirror: Boolean = false,
 ) {
     val rendererRef = remember { mutableStateOf<SurfaceViewRenderer?>(null) }
+    // The track currently wired to the renderer's sink. Used so we ONLY add/remove the sink
+    // when the track actually changes — never on every recomposition.
+    val sinkedTrack = remember { mutableStateOf<VideoTrack?>(null) }
 
     AndroidView(
         modifier = modifier,
@@ -37,16 +40,31 @@ fun VideoRenderer(
                 setEnableHardwareScaler(true)
             }.also { rendererRef.value = it }
         },
-        update = { view -> track?.addSink(view) },
         onReset = {},
     )
-    // When `track` changes, the previous key's onDispose fires first (removing old sink),
-    // then the new effect adds the new sink via `update`.
-    DisposableEffect(track) {
+
+    // CRITICAL: attach/detach the sink only when `track` (or the renderer view) changes.
+    //
+    // This used to live in AndroidView's `update` lambda, which Compose runs on EVERY
+    // recomposition. The parent screen recomposes ~once a second (battery updates) and on
+    // every control toggle, so `track.addSink(view)` was being called over and over with the
+    // SAME sink. libwebrtc keeps a list of sinks and happily adds duplicates, so each video
+    // frame ended up dispatched to hundreds of duplicate sinks — CPU pegged (system load >25),
+    // the main thread starved, and the app ANR'd / hung (notably right when taking a snapshot,
+    // which added yet another sink + heavy work on top). Keying the effect on the track fixes it.
+    val view = rendererRef.value
+    DisposableEffect(view, track) {
+        if (view != null && track != null) {
+            track.addSink(view)
+            sinkedTrack.value = track
+        }
         onDispose {
-            rendererRef.value?.let { view ->
-                try { track?.removeSink(view) } catch (_: Exception) {}
+            val v = rendererRef.value
+            val t = sinkedTrack.value
+            if (v != null && t != null) {
+                try { t.removeSink(v) } catch (_: Exception) {}
             }
+            sinkedTrack.value = null
         }
     }
 }
