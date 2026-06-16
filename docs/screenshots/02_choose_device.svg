@@ -1,0 +1,27 @@
+<svg viewBox="0 0 320 692" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <clipPath id="screen2"><rect x="8" y="8" width="304" height="676" rx="28"/></clipPath>
+  </defs>
+  <rect x="0" y="0" width="320" height="692" rx="36" fill="#1B1830"/>
+  <g clip-path="url(#screen2)">
+    <rect x="8" y="8" width="304" height="676" fill="#F4F3FE"/>
+    <text x="28" y="80" font-size="20" font-weight="700" fill="#26215C">Choose this device</text>
+    <text x="28" y="102" font-size="13" fill="#7D7898">What will this phone do?</text>
+
+    <!-- Baby unit card (highlighted) -->
+    <rect x="22" y="130" width="276" height="92" rx="16" fill="#FFFFFF" stroke="#534AB7" stroke-width="2"/>
+    <rect x="38" y="153" width="46" height="46" rx="12" fill="#EEEDFE"/>
+    <rect x="55" y="168" width="14" height="11" rx="2" fill="#534AB7"/>
+    <circle cx="62" cy="172" r="3.5" fill="#EEEDFE"/>
+    <text x="98" y="172" font-size="15" font-weight="600" fill="#26215C">Baby unit</text>
+    <text x="98" y="192" font-size="12" fill="#7D7898">Stays with baby. Camera &amp; mic on.</text>
+
+    <!-- Parent unit card -->
+    <rect x="22" y="238" width="276" height="92" rx="16" fill="#FFFFFF"/>
+    <rect x="38" y="261" width="46" height="46" rx="12" fill="#E1F5EE"/>
+    <ellipse cx="61" cy="284" rx="13" ry="8" fill="none" stroke="#1D9E75" stroke-width="2"/>
+    <circle cx="61" cy="284" r="3.5" fill="#1D9E75"/>
+    <text x="98" y="280" font-size="15" font-weight="600" fill="#26215C">Parent unit</text>
+    <text x="98" y="300" font-size="12" fill="#7D7898">Watch &amp; listen from here.</text>
+  </g>
+</svg>

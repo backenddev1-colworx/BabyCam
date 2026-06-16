@@ -1,0 +1,51 @@
+<svg viewBox="0 0 320 692" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <clipPath id="screen4"><rect x="8" y="8" width="304" height="676" rx="28"/></clipPath>
+  </defs>
+  <rect x="0" y="0" width="320" height="692" rx="36" fill="#1B1830"/>
+  <g clip-path="url(#screen4)">
+    <rect x="8" y="8" width="304" height="676" fill="#F4F3FE"/>
+
+    <!-- status pill -->
+    <rect x="28" y="64" width="148" height="26" rx="13" fill="#E1F5EE"/>
+    <circle cx="42" cy="77" r="4" fill="#1D9E75"/>
+    <text x="52" y="81" font-size="11" font-weight="600" fill="#1D9E75">Monitoring active</text>
+    <!-- settings gear -->
+    <circle cx="280" cy="77" r="14" fill="none" stroke="#534AB7" stroke-width="2"/>
+    <circle cx="280" cy="77" r="3" fill="#534AB7"/>
+
+    <!-- live camera box -->
+    <rect x="28" y="106" width="264" height="150" rx="14" fill="#16142B"/>
+    <circle cx="46" cy="124" r="4" fill="#E24B4A"/>
+    <text x="56" y="128" font-size="10" fill="#CFCBF0">LIVE</text>
+    <!-- simple camera glyph centered -->
+    <rect x="138" y="160" width="44" height="32" rx="6" fill="#2A2750"/>
+    <circle cx="160" cy="176" r="10" fill="#534AB7"/>
+
+    <!-- feature cards -->
+    <g>
+      <rect x="28" y="272" width="80" height="70" rx="14" fill="#FFFFFF"/>
+      <circle cx="68" cy="296" r="11" fill="none" stroke="#534AB7" stroke-width="2"/>
+      <text x="68" y="328" text-anchor="middle" font-size="10" fill="#7D7898">Camera</text>
+
+      <rect x="120" y="272" width="80" height="70" rx="14" fill="#FFFFFF"/>
+      <rect x="112" y="284" width="0" height="0"/>
+      <rect x="112" y="284" width="0" height="0"/>
+      <circle cx="160" cy="296" r="11" fill="none" stroke="#534AB7" stroke-width="2"/>
+      <text x="160" y="328" text-anchor="middle" font-size="10" fill="#7D7898">Mic</text>
+
+      <rect x="212" y="272" width="80" height="70" rx="14" fill="#FFFFFF"/>
+      <circle cx="252" cy="296" r="11" fill="none" stroke="#534AB7" stroke-width="2"/>
+      <text x="252" y="328" text-anchor="middle" font-size="10" fill="#7D7898">Cry</text>
+    </g>
+
+    <!-- background info card -->
+    <rect x="28" y="364" width="264" height="56" rx="14" fill="#FFFFFF"/>
+    <text x="48" y="396" font-size="11" fill="#534AB7">Runs in background &amp; screen-off</text>
+    <text x="48" y="410" font-size="11" fill="#534AB7">auto-start on boot</text>
+
+    <!-- stop button -->
+    <rect x="28" y="606" width="264" height="50" rx="14" fill="none" stroke="#534AB7" stroke-width="2"/>
+    <text x="160" y="637" text-anchor="middle" font-size="15" font-weight="600" fill="#534AB7">Stop monitoring</text>
+  </g>
+</svg>

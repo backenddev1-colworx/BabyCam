@@ -1,0 +1,15 @@
+<svg viewBox="0 0 320 692" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <clipPath id="screen1"><rect x="8" y="8" width="304" height="676" rx="28"/></clipPath>
+  </defs>
+  <rect x="0" y="0" width="320" height="692" rx="36" fill="#1B1830"/>
+  <g clip-path="url(#screen1)">
+    <rect x="8" y="8" width="304" height="676" fill="#F4F3FE"/>
+    <circle cx="160" cy="270" r="48" fill="#EEEDFE"/>
+    <path d="M160 250c-9 0-16 7-16 16 0 7 4 12 9 15-7 2-13 8-13 16h40c0-8-6-14-13-16 5-3 9-8 9-15 0-9-7-16-16-16z" fill="#534AB7"/>
+    <text x="160" y="354" text-anchor="middle" font-size="26" font-weight="700" fill="#26215C">BabyCam</text>
+    <text x="160" y="378" text-anchor="middle" font-size="13" fill="#7D7898">Watch over your little one</text>
+    <rect x="32" y="606" width="256" height="50" rx="14" fill="#534AB7"/>
+    <text x="160" y="637" text-anchor="middle" font-size="15" font-weight="600" fill="#FFFFFF">Get started</text>
+  </g>
+</svg>
