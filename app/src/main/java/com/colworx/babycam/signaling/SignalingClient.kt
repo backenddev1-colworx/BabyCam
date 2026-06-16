@@ -53,6 +53,9 @@ class SignalingClient(
     private lateinit var key: SecretKeySpec
     private var topic = ""
 
+    /** Set by [close]; stops the initial-connection retry loop from reconnecting after teardown. */
+    @Volatile private var closed = false
+
     /**
      * Connects to the broker, subscribes to the room topic and relays messages.
      *
@@ -71,12 +74,71 @@ class SignalingClient(
     ) {
         topic = "babycam/$room"
         key = SignalCrypto.keyFromRoom(room)
+        closed = false
 
         Thread {
+            // Retry the *initial* connect with capped backoff. Paho's automaticReconnect only
+            // kicks in after the first successful connect, so without this loop a single transient
+            // failure (the free public broker frequently refuses connections) would leave the
+            // device permanently offline — fatal for a baby monitor. Retries until connected or
+            // close() is called.
+            var attempt = 0
+            while (!closed) {
+                attempt++
+                // Resolve to concrete IPv4 addresses and try each. On NAT64/DNS64 networks the
+                // hostname resolves to a synthesized IPv6 address whose NAT64 gateway refuses the
+                // connection (ECONNREFUSED), while the real IPv4 is reachable — Paho only tries
+                // the first resolved address, so we must force IPv4 and iterate ourselves.
+                val urls = resolveBrokerUrls()
+                var ok = false
+                for (url in urls) {
+                    if (closed) break
+                    ok = tryConnect(url, onMessage, onReconnected, onState)
+                    if (ok) break
+                }
+                if (ok || closed) break
+                val backoffMs = minOf(2000L * attempt, 15000L)
+                Log.w(TAG, "All broker addresses failed (attempt $attempt); retrying in ${backoffMs}ms")
+                try { Thread.sleep(backoffMs) } catch (_: InterruptedException) { break }
+            }
+        }.start()
+    }
+
+    /**
+     * Resolves the broker hostname to candidate `tcp://ip:port` URLs, preferring IPv4. Returns the
+     * original hostname URL as a fallback if resolution fails. IPv4 is preferred because some
+     * networks use DNS64/NAT64 and hand back a synthesized IPv6 address that the NAT64 gateway
+     * then refuses — the real IPv4 path works fine.
+     */
+    private fun resolveBrokerUrls(): List<String> = try {
+        val uri = java.net.URI(brokerUrl)
+        val host = uri.host
+        val port = uri.port
+        val all = java.net.InetAddress.getAllByName(host)
+        val v4 = all.filterIsInstance<java.net.Inet4Address>()
+        val chosen = if (v4.isNotEmpty()) v4 else all.toList()
+        chosen.map { "tcp://${it.hostAddress}:$port" }
+            .also { Log.d(TAG, "Resolved $host -> ${it.size} addr(s) (IPv4-preferred): $it") }
+            .ifEmpty { listOf(brokerUrl) }
+    } catch (e: Exception) {
+        Log.w(TAG, "Broker DNS resolve failed (${e.message}); using hostname as-is")
+        listOf(brokerUrl)
+    }
+
+    /**
+     * One connection attempt to [serverUri]. Returns true if connected + subscribed, false on
+     * failure so the caller's retry loop can try the next address / back off.
+     */
+    private fun tryConnect(
+        serverUri: String,
+        onMessage: (SignalMessage) -> Unit,
+        onReconnected: (() -> Unit)?,
+        onState: (Boolean) -> Unit
+    ): Boolean {
             try {
                 val clientId = "babycam-$selfId-${System.currentTimeMillis()}"
-                Log.d(TAG, "Connecting to $brokerUrl, topic=$topic, clientId=$clientId")
-                val mqtt = MqttClient(brokerUrl, clientId, MemoryPersistence())
+                Log.d(TAG, "Connecting to $serverUri, topic=$topic, clientId=$clientId")
+                val mqtt = MqttClient(serverUri, clientId, MemoryPersistence())
 
                 mqtt.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
@@ -139,11 +201,16 @@ class SignalingClient(
                 client = mqtt
                 Log.d(TAG, "Connected and subscribed to $topic")
                 onState(true)
+                return true
             } catch (e: Exception) {
-                Log.e(TAG, "MQTT connect failed: ${e.javaClass.simpleName}: ${e.message}")
+                // Paho wraps the real failure (DNS, refused, timeout, TLS) as a generic
+                // "Unable to connect to server" — walk the cause chain to log the actual reason.
+                val rootCause = generateSequence(e as Throwable) { it.cause }
+                    .joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message}" }
+                Log.e(TAG, "MQTT connect failed: $rootCause")
                 onState(false)
+                return false
             }
-        }.start()
     }
 
     /**
@@ -177,6 +244,7 @@ class SignalingClient(
 
     /** Disconnects and releases the MQTT client. */
     fun close() {
+        closed = true
         try {
             client?.disconnect()
             client?.close()

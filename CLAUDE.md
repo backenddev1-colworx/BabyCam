@@ -44,10 +44,23 @@ Plain `which java`/`adb`/`emulator` is NOT on PATH in this environment — alway
 - ADB: `/opt/homebrew/share/android-commandlinetools/platform-tools/adb`
 - Emulator binary: `/opt/homebrew/share/android-commandlinetools/emulator/emulator`
 - Device: `emulator-5554`
-- **Genuinely unstable** — has crashed on its own twice in testing (process exits ~30-60s after
-  boot, "Failed to restore previous context" in the log) even with `-gpu swiftshader_indirect
-  -no-audio`. Don't burn more than 1-2 retries chasing it; fall back to asking the user for
-  real-device screenshots/logs instead of relying on this AVD.
+- **Not actually unstable — it was being killed by us.** Earlier sessions saw it "crash" ~30-60s
+  after boot ("Failed to restore previous context" in the log), but the logs show clean boots
+  followed by a *graceful shutdown request* — that only fires when something signals the emulator
+  to quit. Root cause: launching it as a blocking foreground `Bash` command means the emulator's
+  process tree dies when that tool call ends/times out. **Fix: always launch it detached** so it
+  survives independent of any single tool call:
+  ```bash
+  nohup env ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools \
+    ANDROID_HOME=/opt/homebrew/share/android-commandlinetools \
+    /opt/homebrew/share/android-commandlinetools/emulator/emulator \
+    -avd BabyCam_Test -gpu swiftshader_indirect -no-snapshot-save -no-boot-anim -no-audio \
+    > /tmp/emu.log 2>&1 < /dev/null &
+  disown
+  ```
+  Then poll `adb shell getprop sys.boot_completed` (or use the Monitor tool) instead of blocking
+  on the launch command. If `~/.android/avd/BabyCam_Test.avd/multiinstance.lock` or
+  `tmpAdbCmds/` are left over from a previous kill, remove them before relaunching.
 - **UIAutomator crashes on the pairing screen** — do NOT run `uiautomator dump` there
 - The emulator's virtual camera and (if no LED model attached) flash unit are not representative
   of real hardware — camera/torch behavior must ultimately be confirmed on real phones
@@ -94,6 +107,37 @@ photos from the user's phone if/when available.
   builds exist. Needs a keystore + `signingConfigs` before a Play Store-style release APK.
 
 ---
+
+## Connectivity fixes (2026-06-16, verified on real Samsung A06 via USB logcat)
+
+These were the real reasons "parent showed black / no video" in field testing — found by pulling
+live logcat from a real phone, not the emulator:
+
+1. **Baby couldn't reach the MQTT broker on NAT64/DNS64 networks (the big one).** On networks
+   that hand out IPv6 + DNS64 (the test Wi-Fi "AST" did), `broker.hivemq.com` resolved to a
+   *synthesized* IPv6 address (`2a01:578:13::12c6:9968` = embedded IPv4 18.198.153.104) and the
+   NAT64 gateway refused it (`ECONNREFUSED`). Paho only tries the first resolved address, so it
+   never fell back to the working IPv4. Result: baby never connected to signaling → never sent an
+   offer → parent stayed black. **Fix:** `SignalingClient.resolveBrokerUrls()` now resolves the
+   broker to all addresses, **prefers IPv4**, and tries each `tcp://ip:port` until one connects.
+2. **No retry on the initial MQTT connect.** Paho's `automaticReconnect` only fires *after* the
+   first successful connect; a single transient failure (the free public broker often refuses)
+   left the device permanently `Signaling DOWN`. **Fix:** initial-connect retry loop with capped
+   backoff (2s→15s) until connected or `close()`.
+3. **TURN relay was dead → ICE FAILED on any non-direct path.** ICE logging showed `typ=host` and
+   `typ=srflx` candidates but **never `typ=relay`** — the old free `openrelay.metered.ca` no longer
+   allocates relays. So cross-network / client-isolated-Wi-Fi / emulator-double-NAT calls had no
+   fallback and failed. **Fix:** switched `WebRtcSession.iceServers()` to **Metered free tier**
+   TURN (`global.relay.metered.ca`, account `babycam.metered.live`, static creds embedded in the
+   client — normal practice). Google STUN kept for redundancy. STUN was already working.
+   - Metered API key (server-side, to regenerate/rotate creds): in the project owner's Metered
+     dashboard. Static client creds are hardcoded in `iceServers()`.
+   - Diagnostic logging added this session: ICE connection/gathering state, `onAddTrack` kind,
+     local ICE candidate `typ=`, and full MQTT cause chain — keep for future field debugging.
+
+**Network gotcha for testing:** the test router "AST" has **client isolation** (Mac could reach
+the gateway but not the phone) — so wireless `adb` to the phone fails and same-Wi-Fi P2P needs
+TURN. The dev Mac is also on a VPN (`utun18` default route). Use **USB** for on-device logcat.
 
 ## Known bugs fixed this session (2026-06-16/17) — read before assuming these still work
 

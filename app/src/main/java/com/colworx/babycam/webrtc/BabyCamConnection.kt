@@ -237,6 +237,10 @@ class BabyCamConnection(
 
     // WebRtcSession.Listener
     override fun onLocalIceCandidate(candidate: IceCandidate) {
+        // Log the candidate type (host / srflx = STUN-reflexive / relay = TURN) so we can tell
+        // whether STUN and TURN are actually working — "relay" means the TURN server allocated.
+        val type = Regex("typ (\\w+)").find(candidate.sdp)?.groupValues?.get(1) ?: "?"
+        Log.d(TAG, "Local ICE candidate: typ=$type")
         val json = JSONObject()
             .put("sdpMid", candidate.sdpMid)
             .put("sdpMLineIndex", candidate.sdpMLineIndex)

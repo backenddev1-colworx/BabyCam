@@ -2,6 +2,7 @@ package com.colworx.babycam.webrtc
 
 import android.content.Context
 import android.media.AudioManager
+import android.util.Log
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraVideoCapturer
@@ -53,17 +54,29 @@ class WebRtcSession(
     var localAudioTrack: AudioTrack? = null
         private set
 
-    /** Public STUN + free Open Relay TURN (no account needed). Same-Wi-Fi works without TURN. */
-    private fun iceServers(): List<PeerConnection.IceServer> = listOf(
-        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-        PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
-        PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
-            .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
-        PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443")
-            .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
-        PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
-            .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
-    )
+    /**
+     * Google STUN + Metered TURN relay. STUN handles most NATs (direct/reflexive); TURN relays
+     * media when direct P2P is impossible (symmetric NAT, client-isolated Wi-Fi, cross-network) —
+     * essential for "works on any network". The previous free openrelay.metered.ca is dead (no
+     * relay candidates ever allocated), so we use Metered's free tier. The 443/tcp + turns entries
+     * survive restrictive firewalls that only allow HTTPS-looking traffic.
+     */
+    private fun iceServers(): List<PeerConnection.IceServer> {
+        val turnUser = "b802535bd8fa917ceca159d0"
+        val turnPass = "MaYcJAzJawOa/L5Q"
+        return listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80").createIceServer(),
+            PeerConnection.IceServer.builder("turn:global.relay.metered.ca:80")
+                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
+            PeerConnection.IceServer.builder("turn:global.relay.metered.ca:80?transport=tcp")
+                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
+            PeerConnection.IceServer.builder("turn:global.relay.metered.ca:443")
+                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
+            PeerConnection.IceServer.builder("turns:global.relay.metered.ca:443?transport=tcp")
+                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
+        )
+    }
 
     fun initialize() {
         configureAudioRouting()
@@ -85,17 +98,25 @@ class WebRtcSession(
         peerConnection = factory.createPeerConnection(config, object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) = listener.onLocalIceCandidate(candidate)
             override fun onAddTrack(receiver: org.webrtc.RtpReceiver?, streams: Array<out MediaStream>?) {
-                when (val t = receiver?.track()) {
+                val t = receiver?.track()
+                Log.d(TAG, "onAddTrack: kind=${t?.kind()} id=${t?.id()}")
+                when (t) {
                     is VideoTrack -> listener.onRemoteVideoTrack(t)
                     is AudioTrack -> listener.onRemoteAudioTrack(t)
                     else -> {}
                 }
             }
-            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) =
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+                Log.d(TAG, "ICE connection state -> $state")
                 listener.onConnectionStateChange(state)
-            override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
+            }
+            override fun onSignalingChange(p0: PeerConnection.SignalingState?) {
+                Log.d(TAG, "Signaling state -> $p0")
+            }
             override fun onIceConnectionReceivingChange(p0: Boolean) {}
-            override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
+                Log.d(TAG, "ICE gathering state -> $state")
+            }
             override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
             override fun onAddStream(p0: MediaStream?) {}
             override fun onRemoveStream(p0: MediaStream?) {}
@@ -203,7 +224,11 @@ class WebRtcSession(
     private fun simpleSdpObserver(onCreate: ((SessionDescription) -> Unit)? = null) = object : SdpObserver {
         override fun onCreateSuccess(sdp: SessionDescription) { onCreate?.invoke(sdp) }
         override fun onSetSuccess() {}
-        override fun onCreateFailure(error: String?) {}
-        override fun onSetFailure(error: String?) {}
+        override fun onCreateFailure(error: String?) { Log.e(TAG, "SDP create failed: $error") }
+        override fun onSetFailure(error: String?) { Log.e(TAG, "SDP set failed: $error") }
+    }
+
+    companion object {
+        private const val TAG = "BabyCam"
     }
 }
