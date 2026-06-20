@@ -64,6 +64,48 @@ the owner's final step.
 - [ ] Replace temporary Metered TURN credentials with a sustainable deployment
 - [ ] Configure release signing and public-store packaging
 
+### Free TURN infra plan (researched 2026-06-21) — free at launch, ads later
+
+Primary use case is parent-at-office / baby-at-home (cross-network), so TURN is needed for most
+connections. Plan, in order of stage — keep owner cost at ₹0 until users grow:
+
+- [ ] **Launch (zero cost, no credit card):** Cloudflare TURN via **Hugging Face access token**
+      — 10 GB/month free, no card, no server. Owner creates free HuggingFace account (email only) +
+      token; wire into `WebRtcSession.iceServers()`.
+- [ ] **Growing users (still free):** **Cloudflare account** TURN — 1 TB/month free (monthly reset,
+      lifetime-free under cap), then $0.05/GB. Note: signup may ask for a card even on free tier
+      (community report Oct 2025) — if so and owner refuses, stay on HuggingFace token route.
+- [ ] **Past 1 TB/month:** add **AdMob** ads (owner wants ads only *later*, not at launch) → ad
+      revenue covers Cloudflare overage, or move to **Hetzner CX22** (€3.79/mo, 20 TB traffic) coturn.
+- Oracle Always Free coturn (`docs/turn-server-setup.md`) kept as last-resort fallback only —
+      owner couldn't create an Oracle account.
+
+### Alfred Camera parity roadmap (gap analysis verified against code 2026-06-21)
+
+BabyCam already matches Alfred on: live view, two-way audio, night/low-light, snapshot, app lock,
+sound detection, **zoom** (pinch 1x–4x + pan), **siren** ("Ring bell"). BabyCam additionally beats
+Alfred with: two-way video (Share Cam), lullaby/white-noise/heartbeat/rain, cry detection +
+sensitivity, torch remote, camera flip remote, low-battery alert, data/battery saver modes.
+
+Verified MISSING vs Alfred (no code found) — all FREE to build except cloud storage. Ordered by
+impact-per-effort:
+
+- [ ] **Motion detection (visual)** — analyse live frames (frame/pixel diff), alert on movement.
+      🟢 Free. Mirror the cry-detection pattern but on video frames via `FrameCapture`-style sink.
+- [ ] **Event video clips** — auto-record a short clip to device storage on motion/cry trigger.
+      🟢 Free (local, no cloud). Needs a `MediaRecorder`/`VideoCapture` path; today only single-frame
+      snapshot exists.
+- [ ] **Playback / history** — list + replay locally recorded clips. 🟢 Free (local).
+- [ ] **Continuous recording (local)** — optional 24/7 capture to device storage. 🟢 Free (local).
+- [ ] **Video clip sharing** — share a recorded clip as a file. 🟢 Free (Android share sheet).
+- [ ] **Detection zone** — let parent draw a boundary so only motion inside it alerts. 🟢 Free (UI + crop).
+- [ ] **Detection schedule** — time-based auto on/off of detection. 🟢 Free (logic + prefs).
+- [ ] **AI person/pet detection** — on-device TensorFlow Lite to filter non-human motion.
+      🟡 Free but heavy (model size + CPU); do after basic motion detection.
+- [ ] **Trust circle (multi-viewer)** — multiple parents/relatives view simultaneously.
+      🟡 Architecture change — current design is 1-to-1 pairing; needs multi-peer signaling.
+- [ ] **Cloud storage** — off-device clip backup. 🔴 Costs money — defer until ads/revenue exist.
+
 ## P0: Privacy And Parent Control
 
 - [x] Baby camera is provisioned for WebRTC but never captures on startup
