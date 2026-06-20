@@ -81,22 +81,25 @@ class WebRtcSession(
      * relay candidates ever allocated), so we use Metered's free tier. The 443/tcp + turns entries
      * survive restrictive firewalls that only allow HTTPS-looking traffic.
      */
-    private fun iceServers(): List<PeerConnection.IceServer> {
-        val turnUser = "b802535bd8fa917ceca159d0"
-        val turnPass = "MaYcJAzJawOa/L5Q"
-        return listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80").createIceServer(),
-            PeerConnection.IceServer.builder("turn:global.relay.metered.ca:80")
-                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
-            PeerConnection.IceServer.builder("turn:global.relay.metered.ca:80?transport=tcp")
-                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
-            PeerConnection.IceServer.builder("turn:global.relay.metered.ca:443")
-                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
-            PeerConnection.IceServer.builder("turns:global.relay.metered.ca:443?transport=tcp")
-                .setUsername(turnUser).setPassword(turnPass).createIceServer(),
-        )
+    // TURN/STUN endpoints are defined centrally in TurnConfig so the relay provider can be switched
+    // (Metered / Cloudflare / self-hosted coturn / STUN-only) with a one-line change there.
+    private var resolvedIceServers: List<PeerConnection.IceServer> = TurnConfig.iceServers()
+
+    // Called from BabyCamConnection.start() (inside a coroutine) when Cloudflare is the active
+    // provider so ephemeral credentials can be fetched before the PeerConnection is created.
+    // Falls back to Metered if the API call fails (network error / bad token).
+    suspend fun resolveCloudflareIceServers() {
+        if (TurnConfig.ACTIVE_PROVIDER != TurnConfig.Provider.CLOUDFLARE) return
+        val servers = CloudflareTurnFetcher.fetch()
+        resolvedIceServers = if (servers != null) {
+            TurnConfig.iceServers() + servers
+        } else {
+            Log.w(TAG, "Cloudflare TURN fetch failed — falling back to Metered")
+            TurnConfig.Metered.servers().let { TurnConfig.iceServers() + it }
+        }
     }
+
+    private fun iceServers(): List<PeerConnection.IceServer> = resolvedIceServers
 
     fun initialize() {
         PeerConnectionFactory.initialize(

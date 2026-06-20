@@ -89,6 +89,7 @@ class BabyCamConnection(
     fun start() {
         scope.launch {
             if (stopped.get()) return@launch
+            session.resolveCloudflareIceServers()
             session.initialize()
             session.startAudio()
             if (role == ConnRole.BABY) {

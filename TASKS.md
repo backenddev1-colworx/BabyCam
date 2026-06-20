@@ -61,22 +61,29 @@ the owner's final step.
 ## Deferred Public Release Work
 
 - [ ] Replace four-digit pairing security before any public release
-- [ ] Replace temporary Metered TURN credentials with a sustainable deployment
+- [x] Replace temporary Metered TURN credentials with a sustainable deployment — **Cloudflare Realtime TURN active (1 TB/month free)**
 - [ ] Configure release signing and public-store packaging
+- [ ] Set Cloudflare billing alert at ~800 GB to trigger AdMob integration before any overage
 
 ### Free TURN infra plan (researched 2026-06-21) — free at launch, ads later
 
 Primary use case is parent-at-office / baby-at-home (cross-network), so TURN is needed for most
 connections. Plan, in order of stage — keep owner cost at ₹0 until users grow:
 
-- [ ] **Launch (zero cost, no credit card):** Cloudflare TURN via **Hugging Face access token**
-      — 10 GB/month free, no card, no server. Owner creates free HuggingFace account (email only) +
-      token; wire into `WebRtcSession.iceServers()`.
-- [ ] **Growing users (still free):** **Cloudflare account** TURN — 1 TB/month free (monthly reset,
-      lifetime-free under cap), then $0.05/GB. Note: signup may ask for a card even on free tier
-      (community report Oct 2025) — if so and owner refuses, stay on HuggingFace token route.
-- [ ] **Past 1 TB/month:** add **AdMob** ads (owner wants ads only *later*, not at launch) → ad
-      revenue covers Cloudflare overage, or move to **Hetzner CX22** (€3.79/mo, 20 TB traffic) coturn.
+  Owner HAS a card and is OK putting one on file — the only hard requirement is "stays free until the
+  app hits 1000+ users." So pick the plan with the most free headroom, not the strictest no-card one.
+
+- [x] **Launch + growth (BEST — most free headroom):** **Cloudflare account** TURN — 1 TB/month free
+      (monthly reset, lifetime-free while under the cap), then $0.05/GB. ~5000 relay-hours/mo, 50× the
+      Metered 20 GB plan. Creds wired into `TurnConfig.kt` + `CloudflareTurnFetcher.kt`.
+      Verified working on Samsung SM-A065F ↔ emulator via `typ=relay` — Cloudflare TURN confirmed active.
+      ⚠️ Still TODO: Set **Cloudflare billing alert (~800 GB)** in dashboard.
+- [ ] **Zero-risk fallback (guaranteed never charged):** Metered **"Free: 20GB"** plan — 20 GB/month,
+      "No Overages" = relay simply stops at 20 GB, card on file is never charged. Already integrated
+      as fallback in `CloudflareTurnFetcher` if API call fails. Smaller, but mathematically impossible to be billed.
+- [ ] **Past 1 TB/month (≈ approaching 1000 users):** add **AdMob** ads (owner wants ads only *later*,
+      not at launch) → ad revenue covers Cloudflare overage, or move to **Hetzner CX22** (€3.79/mo,
+      20 TB traffic) coturn.
 - Oracle Always Free coturn (`docs/turn-server-setup.md`) kept as last-resort fallback only —
       owner couldn't create an Oracle account.
 

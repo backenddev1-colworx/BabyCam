@@ -4,8 +4,9 @@ A native Android baby monitor. One phone stays with the baby (camera + mic); a s
 watches and listens from anywhere on the same network or remotely — live video, two-way talk,
 cry alerts, lullabies, and full remote control of the baby phone's camera/mic/torch.
 
-Built to run on **only free, lifetime-free infrastructure** — no account, no credit card, no
-subscription, ever.
+Built on a fully free infrastructure stack — no subscription, no per-user fees.
+Same-network sessions connect directly (no relay). Remote sessions relay through Cloudflare
+Realtime TURN (1 TB/month free tier).
 
 > Mockups below are rendered directly from this app's actual color palette, copy, and layout
 > (`ui/theme/Color.kt`, `ui/screens/*.kt`) — not photos from a running emulator.
@@ -32,6 +33,7 @@ subscription, ever.
   controlled from the parent
 - **Night mode** — low-light color treatment on the parent's live view
 - **Snapshot** — save the current frame from the live feed to the parent's gallery
+- **Zoom** — pinch-to-zoom (1x–4x) on the parent's live view
 - **Low battery alert** — baby phone notifies the parent when its battery drops below 20%
 - **Data saver** — audio-only mode to cut bandwidth/battery use
 - **Persistent pairing** — once paired, reconnects automatically (MQTT auto-reconnect +
@@ -43,14 +45,14 @@ subscription, ever.
 - **Screen-off standby** — a foreground service keeps signaling reachable; after reboot the user
   taps a notification to unlock and resume instead of silently activating camera or microphone
 
-## Tech stack (all free, no account required)
+## Tech stack
 
 | Layer | Choice |
 |---|---|
 | Language / UI | Kotlin + Jetpack Compose + Material3 |
 | Real-time media | WebRTC ([`io.getstream:stream-webrtc-android`](https://github.com/GetStream/webrtc-android)) |
 | Signaling / pairing | MQTT over the public [HiveMQ broker](https://www.hivemq.com/public-mqtt-broker/) — payloads encrypted with AES-256-GCM, keyed off the pairing code |
-| NAT traversal | Google STUN + [Open Relay](https://www.metered.ca/tools/openrelay/) free public TURN |
+| NAT traversal | Google STUN (free) + Cloudflare Realtime TURN (1 TB/month free tier) — provider-agnostic `TurnConfig.kt`, switchable with one line |
 | Background execution | Foreground Service (`camera` + `microphone` type) + `BOOT_COMPLETED` receiver |
 | Local persistence | Jetpack DataStore (Preferences) |
 | App lock | AndroidX Biometric |
@@ -76,12 +78,13 @@ encrypted payloads, so there is nothing to host or pay for.
                      Public MQTT broker (broker.hivemq.com)
                      AES-256-GCM encrypted payloads, room = pairing code
                                    │
-                     Google STUN + Open Relay TURN (media relay fallback)
+                     Google STUN → direct P2P (same network)
+                     Cloudflare Realtime TURN → relay fallback (cross-network)
 ```
 
-The baby phone's foreground service keeps a connection open continuously so it's always
-reachable; the parent connects on demand. Same-Wi-Fi sessions use direct/STUN candidates; remote
-sessions fall back to the free TURN relay automatically.
+Same-network sessions (baby at home, parent on same Wi-Fi) use direct ICE candidates — zero
+relay bandwidth. Remote sessions (parent at office) fall back to Cloudflare TURN automatically.
+ICE candidate priority: `host` → `srflx` (STUN) → `relay` (TURN).
 
 ## Project structure
 
@@ -95,7 +98,10 @@ app/src/main/java/com/colworx/babycam/
 ├── webrtc/
 │   ├── LiveSession.kt            ← app-wide observable connection state
 │   ├── BabyCamConnection.kt      ← WebRTC ↔ MQTT signaling orchestration
-│   └── WebRtcSession.kt          ← PeerConnection, camera/mic tracks
+│   ├── WebRtcSession.kt          ← PeerConnection, camera/mic tracks
+│   ├── TurnConfig.kt             ← provider-agnostic TURN config (Cloudflare / Metered / coturn / STUN-only)
+│   ├── CloudflareTurnFetcher.kt  ← fetches ephemeral Cloudflare TURN credentials at session start
+│   └── Camera2TorchController.kt ← injects FLASH_MODE_TORCH into WebRTC's Camera2 repeating request
 ├── signaling/
 │   ├── SignalingClient.kt        ← MQTT client
 │   ├── SignalCrypto.kt           ← AES-GCM payload encryption
@@ -112,6 +118,16 @@ app/src/main/java/com/colworx/babycam/
 └── security/
     └── PinManager.kt             ← PIN / biometric app lock
 ```
+
+## Switching TURN provider
+
+Open `webrtc/TurnConfig.kt` and change one line:
+
+```kotlin
+val ACTIVE_PROVIDER = Provider.CLOUDFLARE   // ← METERED | SELF_HOSTED_COTURN | STUN_ONLY
+```
+
+Credentials for each provider are defined in their respective objects in the same file.
 
 ## Building
 
@@ -143,4 +159,4 @@ The debug APK is produced at `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## License
 
-Personal project — no license file yet. Ask before reuse.
+Private repository — personal project. Do not redistribute or reuse without permission.
