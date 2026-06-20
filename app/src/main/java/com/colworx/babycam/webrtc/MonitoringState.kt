@@ -48,3 +48,10 @@ sealed interface MonitoringCommand {
     data object ParentDisconnected : MonitoringCommand
     data object ControlLeaseExpired : MonitoringCommand
 }
+
+object MonitoringSessionDefaults {
+    @Suppress("UNUSED_PARAMETER")
+    fun initial(initialMicOn: Boolean = false): MonitoringState = MonitoringState()
+
+    fun reset(): MonitoringState = MonitoringState()
+}

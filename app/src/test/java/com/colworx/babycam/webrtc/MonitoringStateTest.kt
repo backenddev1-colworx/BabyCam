@@ -60,6 +60,86 @@ class MonitoringStateTest {
     }
 
     @Test
+    fun setCamera_canEnableOnlyCameraFromDefaults() {
+        assertEquals(
+            MonitoringState(cameraEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetCamera(true)),
+        )
+    }
+
+    @Test
+    fun setBabyMicrophone_canEnableOnlyBabyMicrophoneFromDefaults() {
+        assertEquals(
+            MonitoringState(babyMicrophoneEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetBabyMicrophone(true)),
+        )
+    }
+
+    @Test
+    fun setTorch_canEnableOnlyTorchFromDefaults() {
+        assertEquals(
+            MonitoringState(torchEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetTorch(true)),
+        )
+    }
+
+    @Test
+    fun setCryDetection_canEnableOnlyCryDetectionFromDefaults() {
+        assertEquals(
+            MonitoringState(cryDetectionEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetCryDetection(true)),
+        )
+    }
+
+    @Test
+    fun setLullabyPlayback_canEnableOnlyLullabyPlaybackFromDefaults() {
+        assertEquals(
+            MonitoringState(lullabyPlaybackEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetLullabyPlayback(true)),
+        )
+    }
+
+    @Test
+    fun setParentCameraSharing_canEnableOnlyParentCameraSharingFromDefaults() {
+        assertEquals(
+            MonitoringState(parentCameraSharingEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetParentCameraSharing(true)),
+        )
+    }
+
+    @Test
+    fun setParentTalk_canEnableOnlyParentTalkFromDefaults() {
+        assertEquals(
+            MonitoringState(parentTalkEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetParentTalk(true)),
+        )
+    }
+
+    @Test
+    fun setVideoSaver_canEnableOnlyVideoSaverFromDefaults() {
+        assertEquals(
+            MonitoringState(videoSaverEnabled = true),
+            MonitoringState().transition(MonitoringCommand.SetVideoSaver(true)),
+        )
+    }
+
+    @Test
+    fun parentSessionInitialState_keepsCameraAndMicOffWhenLegacyMicFlagIsTrue() {
+        val state = MonitoringSessionDefaults.initial(initialMicOn = true)
+
+        assertFalse(state.cameraEnabled)
+        assertFalse(state.babyMicrophoneEnabled)
+    }
+
+    @Test
+    fun resetState_keepsCameraAndMicOff() {
+        val state = MonitoringSessionDefaults.reset()
+
+        assertFalse(state.cameraEnabled)
+        assertFalse(state.babyMicrophoneEnabled)
+    }
+
+    @Test
     fun parentDisconnected_turnsActiveCapabilitiesOffAndPreservesQualityPreference() {
         val result = allCapabilitiesActive()
             .transition(MonitoringCommand.ParentDisconnected)

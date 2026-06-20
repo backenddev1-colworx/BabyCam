@@ -12,6 +12,8 @@ import org.webrtc.VideoTrack
  * without threading a ViewModel through navigation. Baby and Parent flows both go through here.
  */
 object LiveSession {
+    private val initialMonitoringState = MonitoringSessionDefaults.initial()
+
     var connection: BabyCamConnection? = null
         private set
     var room: String = ""
@@ -32,8 +34,8 @@ object LiveSession {
     val cryPing = mutableStateOf(0L)
 
     /** Remote control state — parent controls these, baby obeys. */
-    val babyCamEnabled = mutableStateOf(false)
-    val babyMicEnabled = mutableStateOf(false)
+    val babyCamEnabled = mutableStateOf(initialMonitoringState.cameraEnabled)
+    val babyMicEnabled = mutableStateOf(initialMonitoringState.babyMicrophoneEnabled)
     val babyTorchOn = mutableStateOf(false)
 
     /** Parent-observed: whether the baby's cry detection is currently ON (synced via "cry_state"). */
@@ -67,10 +69,12 @@ object LiveSession {
      * [initialMicOn] is retained for call-site compatibility only. New sessions always begin with
      * the baby microphone OFF and require an explicit parent command to enable it.
      */
-    @Suppress("UNUSED_PARAMETER")
     fun startParent(context: Context, room: String, initialMicOn: Boolean = false) {
         stop()
         this.room = room
+        val initialState = MonitoringSessionDefaults.initial(initialMicOn)
+        babyCamEnabled.value = initialState.cameraEnabled
+        babyMicEnabled.value = initialState.babyMicrophoneEnabled
         val conn = BabyCamConnection(
             context.applicationContext, ConnRole.PARENT, room,
             onRemoteVideo = { remoteVideo.value = it },
@@ -164,6 +168,7 @@ object LiveSession {
     }
 
     fun stop() {
+        val resetState = MonitoringSessionDefaults.reset()
         connection?.stop()
         connection = null
         remoteVideo.value = null
@@ -171,8 +176,8 @@ object LiveSession {
         connState.value = null
         signalingUp.value = false
         babyBattery.value = null
-        babyCamEnabled.value = false
-        babyMicEnabled.value = false
+        babyCamEnabled.value = resetState.cameraEnabled
+        babyMicEnabled.value = resetState.babyMicrophoneEnabled
         babyTorchOn.value = false
         babyCryDetectionEnabled.value = false
         babyVideoSaver.value = false
