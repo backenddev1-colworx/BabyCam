@@ -55,6 +55,7 @@ class BabyCamConnection(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var batteryReceiver: BroadcastReceiver? = null
+    private val batteryPublisher = BatteryPublisher(::sendBattery)
     private val iceRestarting = AtomicBoolean(false)
 
     val eglContext get() = session.eglBase.eglBaseContext
@@ -86,6 +87,7 @@ class BabyCamConnection(
                             ConnRole.BABY -> session.createOffer { sdp ->
                                 Log.d(TAG, "Baby: re-offer after MQTT reconnect")
                                 signaling.send("offer", sdp.description, retained = true)
+                                syncCurrentBattery()
                             }
                             ConnRole.PARENT -> {
                                 Log.d(TAG, "Parent: re-ping after MQTT reconnect")
@@ -120,25 +122,25 @@ class BabyCamConnection(
         }
     }
 
-    /** Baby side: report battery level to the parent on every system battery broadcast. */
+    /** Baby side: report battery changes and remember the current level for forced syncs. */
     private fun registerBatteryReceiver() {
         if (role != ConnRole.BABY || batteryReceiver != null) return
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
-                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
-                if (level >= 0 && scale > 0) sendBattery(level * 100 / scale)
+                observeBattery(intent)
             }
         }
         batteryReceiver = receiver
         val sticky = context.applicationContext
             .registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        // Emit the current level immediately from the sticky broadcast.
-        if (sticky != null) {
-            val level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-            val scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
-            if (level >= 0 && scale > 0) sendBattery(level * 100 / scale)
-        }
+        sticky?.let(::observeBattery)
+    }
+
+    private fun observeBattery(intent: Intent) {
+        batteryPublisher.observe(
+            level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1),
+            scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1),
+        )
     }
 
     private fun onSignal(msg: SignalMessage) {
@@ -149,6 +151,7 @@ class BabyCamConnection(
                     Log.d(TAG, "Baby: fresh offer created for parent")
                     signaling.send("offer", sdp.description, retained = true)
                 }
+                syncCurrentBattery()
                 // Tell the (re)connecting parent the current cry-detection state so its toggle is
                 // accurate without the parent having to change anything.
                 scope.launch { sendCryState(AppPreferences(context).cryDetectionEnabled.first()) }
@@ -257,6 +260,11 @@ class BabyCamConnection(
 
     /** Baby: publish current battery percentage to the parent. */
     fun sendBattery(pct: Int) = signaling.send("battery", pct.toString())
+
+    /** Baby: republish the last known battery percentage for a reconnecting parent. */
+    fun syncCurrentBattery() {
+        if (role == ConnRole.BABY) batteryPublisher.forceCurrent()
+    }
 
     /** Baby: alert the parent that the baby is crying. */
     fun sendCry() = signaling.send("cry", "1")
