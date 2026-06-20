@@ -32,8 +32,8 @@ object LiveSession {
     val cryPing = mutableStateOf(0L)
 
     /** Remote control state — parent controls these, baby obeys. */
-    val babyCamEnabled = mutableStateOf(true)
-    val babyMicEnabled = mutableStateOf(true)
+    val babyCamEnabled = mutableStateOf(false)
+    val babyMicEnabled = mutableStateOf(false)
     val babyTorchOn = mutableStateOf(false)
 
     /** Parent-observed: whether the baby's cry detection is currently ON (synced via "cry_state"). */
@@ -64,27 +64,18 @@ object LiveSession {
     }
 
     /**
-     * @param initialMicOn restores a previously-saved privacy-mute for this baby (see
-     *        [com.colworx.babycam.data.SavedBaby.micMuted]). The baby defaults its mic to ON when
-     *        it (re)connects, so if the parent had muted it we must explicitly re-send "off"
-     *        once signaling comes up — otherwise a reconnect would silently un-mute.
+     * [initialMicOn] is retained for call-site compatibility only. New sessions always begin with
+     * the baby microphone OFF and require an explicit parent command to enable it.
      */
-    fun startParent(context: Context, room: String, initialMicOn: Boolean = true) {
+    @Suppress("UNUSED_PARAMETER")
+    fun startParent(context: Context, room: String, initialMicOn: Boolean = false) {
         stop()
         this.room = room
-        babyMicEnabled.value = initialMicOn
-        var sentInitialMicState = false
         val conn = BabyCamConnection(
             context.applicationContext, ConnRole.PARENT, room,
             onRemoteVideo = { remoteVideo.value = it },
             onState = { connState.value = it },
-            onSignalingUp = { up ->
-                signalingUp.value = up
-                if (up && !initialMicOn && !sentInitialMicState) {
-                    sentInitialMicState = true
-                    connection?.setRemoteMic(false)
-                }
-            },
+            onSignalingUp = { signalingUp.value = it },
             onBatteryUpdate = { babyBattery.value = it },
             onCryAlert = { cryPing.value = cryPing.value + 1 },
             onTorchState = { babyTorchOn.value = it },
@@ -180,8 +171,8 @@ object LiveSession {
         connState.value = null
         signalingUp.value = false
         babyBattery.value = null
-        babyCamEnabled.value = true
-        babyMicEnabled.value = true
+        babyCamEnabled.value = false
+        babyMicEnabled.value = false
         babyTorchOn.value = false
         babyCryDetectionEnabled.value = false
         babyVideoSaver.value = false
