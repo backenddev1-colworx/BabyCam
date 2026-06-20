@@ -124,19 +124,29 @@ class MonitoringStateTest {
     }
 
     @Test
-    fun parentSessionInitialState_keepsCameraAndMicOffWhenLegacyMicFlagIsTrue() {
+    fun parentSessionInitialState_keepsEveryExposedFieldOffWhenLegacyMicFlagIsTrue() {
         val state = MonitoringSessionDefaults.initial(initialMicOn = true)
 
-        assertFalse(state.cameraEnabled)
-        assertFalse(state.babyMicrophoneEnabled)
+        assertFalse(state.babyCamEnabled)
+        assertFalse(state.babyMicEnabled)
+        assertFalse(state.babyTorchOn)
+        assertFalse(state.babyCryDetectionEnabled)
+        assertFalse(state.babyVideoSaver)
+        assertFalse(state.parentSharingCamera)
+        assertFalse(state.parentCamSharing)
     }
 
     @Test
-    fun resetState_keepsCameraAndMicOff() {
+    fun resetState_keepsEveryExposedFieldOff() {
         val state = MonitoringSessionDefaults.reset()
 
-        assertFalse(state.cameraEnabled)
-        assertFalse(state.babyMicrophoneEnabled)
+        assertFalse(state.babyCamEnabled)
+        assertFalse(state.babyMicEnabled)
+        assertFalse(state.babyTorchOn)
+        assertFalse(state.babyCryDetectionEnabled)
+        assertFalse(state.babyVideoSaver)
+        assertFalse(state.parentSharingCamera)
+        assertFalse(state.parentCamSharing)
     }
 
     @Test

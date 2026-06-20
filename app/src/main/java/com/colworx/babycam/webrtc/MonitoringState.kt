@@ -49,9 +49,19 @@ sealed interface MonitoringCommand {
     data object ControlLeaseExpired : MonitoringCommand
 }
 
+data class MonitoringSessionState(
+    val babyCamEnabled: Boolean = false,
+    val babyMicEnabled: Boolean = false,
+    val babyTorchOn: Boolean = false,
+    val babyCryDetectionEnabled: Boolean = false,
+    val babyVideoSaver: Boolean = false,
+    val parentSharingCamera: Boolean = false,
+    val parentCamSharing: Boolean = false,
+)
+
 object MonitoringSessionDefaults {
     @Suppress("UNUSED_PARAMETER")
-    fun initial(initialMicOn: Boolean = false): MonitoringState = MonitoringState()
+    fun initial(initialMicOn: Boolean = false): MonitoringSessionState = MonitoringSessionState()
 
-    fun reset(): MonitoringState = MonitoringState()
+    fun reset(): MonitoringSessionState = MonitoringSessionState()
 }

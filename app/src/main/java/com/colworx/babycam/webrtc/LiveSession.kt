@@ -34,21 +34,21 @@ object LiveSession {
     val cryPing = mutableStateOf(0L)
 
     /** Remote control state — parent controls these, baby obeys. */
-    val babyCamEnabled = mutableStateOf(initialMonitoringState.cameraEnabled)
-    val babyMicEnabled = mutableStateOf(initialMonitoringState.babyMicrophoneEnabled)
-    val babyTorchOn = mutableStateOf(false)
+    val babyCamEnabled = mutableStateOf(initialMonitoringState.babyCamEnabled)
+    val babyMicEnabled = mutableStateOf(initialMonitoringState.babyMicEnabled)
+    val babyTorchOn = mutableStateOf(initialMonitoringState.babyTorchOn)
 
     /** Parent-observed: whether the baby's cry detection is currently ON (synced via "cry_state"). */
-    val babyCryDetectionEnabled = mutableStateOf(false)
+    val babyCryDetectionEnabled = mutableStateOf(initialMonitoringState.babyCryDetectionEnabled)
 
     /** Parent-observed: whether the baby's capture is in battery-saver (low-res) mode. */
-    val babyVideoSaver = mutableStateOf(false)
+    val babyVideoSaver = mutableStateOf(initialMonitoringState.babyVideoSaver)
 
     /** Parent's own state: whether the parent is currently sharing its camera back to the baby. */
-    val parentSharingCamera = mutableStateOf(false)
+    val parentSharingCamera = mutableStateOf(initialMonitoringState.parentSharingCamera)
 
     /** Baby-observed: whether the parent is sharing its camera (drives the PiP on the baby screen). */
-    val parentCamSharing = mutableStateOf(false)
+    val parentCamSharing = mutableStateOf(initialMonitoringState.parentCamSharing)
 
     fun startBaby(context: Context, room: String) {
         stop()
@@ -73,8 +73,8 @@ object LiveSession {
         stop()
         this.room = room
         val initialState = MonitoringSessionDefaults.initial(initialMicOn)
-        babyCamEnabled.value = initialState.cameraEnabled
-        babyMicEnabled.value = initialState.babyMicrophoneEnabled
+        babyCamEnabled.value = initialState.babyCamEnabled
+        babyMicEnabled.value = initialState.babyMicEnabled
         val conn = BabyCamConnection(
             context.applicationContext, ConnRole.PARENT, room,
             onRemoteVideo = { remoteVideo.value = it },
@@ -176,12 +176,12 @@ object LiveSession {
         connState.value = null
         signalingUp.value = false
         babyBattery.value = null
-        babyCamEnabled.value = resetState.cameraEnabled
-        babyMicEnabled.value = resetState.babyMicrophoneEnabled
-        babyTorchOn.value = false
-        babyCryDetectionEnabled.value = false
-        babyVideoSaver.value = false
-        parentSharingCamera.value = false
-        parentCamSharing.value = false
+        babyCamEnabled.value = resetState.babyCamEnabled
+        babyMicEnabled.value = resetState.babyMicEnabled
+        babyTorchOn.value = resetState.babyTorchOn
+        babyCryDetectionEnabled.value = resetState.babyCryDetectionEnabled
+        babyVideoSaver.value = resetState.babyVideoSaver
+        parentSharingCamera.value = resetState.parentSharingCamera
+        parentCamSharing.value = resetState.parentCamSharing
     }
 }
