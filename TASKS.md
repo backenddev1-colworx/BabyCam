@@ -24,6 +24,8 @@ the owner's final step.
 - [ ] Baby sends actual camera, microphone, torch, cry, and parent-camera states
 - [ ] Parent UI updates from baby acknowledgements instead of optimistic state alone
 - [ ] Reconnect preserves the current parent-selected states without auto-enabling media
+- [ ] App lock gates session restoration; no media/control session starts behind the lock screen
+- [ ] Explicit parent disconnect or expired control lease forces camera, mic, torch, and playback OFF
 - [ ] Baby status screen accurately labels every active/inactive capability
 
 ## P0: Signaling And Reconnect
@@ -33,7 +35,11 @@ the owner's final step.
 - [ ] Audio/video tracks cannot be added twice
 - [ ] Concurrent ping/reconnect/ICE recovery cannot create overlapping offers
 - [ ] Stale retained offer cannot silently activate media
+- [ ] SDP offers are not retained; offline babies cannot appear online from stale MQTT data
+- [ ] Presence checks use correlated ping/pong and never trigger WebRTC renegotiation
+- [ ] SDP set/create operations are ordered and serialized
 - [ ] Connection stop prevents late callbacks and reconnect work
+- [ ] Replaced-session callbacks cannot mutate or command the current room
 
 ## P0: Service And Resource Safety
 
@@ -43,6 +49,10 @@ the owner's final step.
 - [ ] Wake locks and receivers are released exactly once
 - [ ] Foreground notification says standby when no monitoring capability is active
 - [ ] Boot restore starts signaling/standby only; it does not activate camera or mic
+- [ ] Services do not use START_STICKY unless they reconstruct the owned session
+- [ ] Parent standby does not hold an indefinite wake lock
+- [ ] Auto-start defaults OFF and reboot requires user-mediated resume
+- [ ] Foreground-service types match work that is actually active
 
 ## P1: Battery And State Sync
 
@@ -50,6 +60,7 @@ the owner's final step.
 - [ ] Battery publishes only when percentage changes
 - [ ] Reconnecting parent receives one forced current battery value
 - [ ] Low-battery notification remains edge-triggered at 20%
+- [ ] Notifications-enabled startup at low battery produces exactly one alert
 - [ ] Invalid battery values are ignored
 
 ## P1: Automated Verification

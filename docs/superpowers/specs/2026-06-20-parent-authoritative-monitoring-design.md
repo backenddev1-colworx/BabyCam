@@ -13,6 +13,10 @@ until the parent explicitly enables the relevant capability.
   parent can reach the baby device.
 - A reconnect must preserve the active session state. It must never turn a capability ON
   merely because MQTT or ICE reconnected.
+- An explicit parent disconnect or expired control lease fails safe by turning camera,
+  microphone, torch, playback, and parent-camera sharing OFF.
+- App lock gates session restoration. Signaling and media sessions do not start behind the
+  lock screen.
 - The baby device is authoritative for hardware state. Parent controls may update
   optimistically for responsiveness, but baby acknowledgements correct the displayed state.
 - Existing saved microphone preferences do not auto-enable the microphone. New sessions begin
@@ -82,6 +86,10 @@ Baby sends acknowledgements for camera, microphone, torch, cry detection, and pa
 visibility. On parent ping/reconnect, baby sends a full state snapshot plus current battery.
 The snapshot reports actual state and does not mutate it.
 
+Parent control includes a renewable lease. Valid parent control traffic refreshes the lease.
+Explicit disconnect or lease expiry applies an all-OFF safety transition. This prevents a lost
+parent/network from leaving baby hardware active indefinitely.
+
 ### Battery behavior
 
 Battery percentage parsing and publication policy are framework-free:
@@ -113,6 +121,7 @@ for the new service session under the all-default-OFF policy.
   and report OFF.
 - Late signaling callbacks after `stop()` are ignored.
 - Resource cleanup is idempotent.
+- Session auto-restore waits until app-lock state is resolved and unlocked.
 
 ## Testing
 
@@ -129,6 +138,8 @@ Required automated cases:
 - Battery duplicate values are suppressed; forced sync emits once.
 - Invalid battery values are ignored.
 - Service stop policy is idempotent.
+- Parent disconnect and lease expiry produce the all-OFF transition.
+- Locked startup produces no session-start action.
 
 ## Explicit Non-Goals
 

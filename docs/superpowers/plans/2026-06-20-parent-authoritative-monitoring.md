@@ -22,8 +22,8 @@ acknowledgements, and isolate Android-independent policies for JVM testing.
 - Create: `app/src/test/java/com/colworx/babycam/webrtc/MonitoringStateTest.kt`
 - Modify: `app/src/main/java/com/colworx/babycam/webrtc/LiveSession.kt`
 
-- [ ] Write tests proving every capability defaults OFF and individual commands do not mutate
-  unrelated state.
+- [ ] Write tests proving every capability defaults OFF, individual commands do not mutate
+  unrelated state, and disconnect/lease expiry forces active capabilities OFF.
 - [ ] Run `./gradlew testDebugUnitTest --tests '*MonitoringStateTest'` and confirm RED.
 - [ ] Implement immutable state and command transitions.
 - [ ] Run the focused test and confirm GREEN.
@@ -61,14 +61,18 @@ acknowledgements, and isolate Android-independent policies for JVM testing.
 - Create: `app/src/main/java/com/colworx/babycam/signaling/ConnectionReadyPolicy.kt`
 - Create: `app/src/test/java/com/colworx/babycam/signaling/ConnectionReadyPolicyTest.kt`
 - Modify: `app/src/main/java/com/colworx/babycam/signaling/SignalingClient.kt`
+- Modify: `app/src/main/java/com/colworx/babycam/signaling/PresenceChecker.kt`
 - Modify: `app/src/main/java/com/colworx/babycam/webrtc/BabyCamConnection.kt`
 
 - [ ] Write tests proving initial and reconnect readiness each dispatch once and duplicates are
   ignored.
 - [ ] Run the focused test and confirm RED.
 - [ ] Separate signaling reachability callbacks from initial/reconnect ready callbacks.
+- [ ] Protect connect attempts and callbacks with a generation token; close stale local clients.
 - [ ] Move offer/ping recovery to one role-aware path.
 - [ ] Serialize offer generation across ping, MQTT reconnect, and ICE restart.
+- [ ] Stop retaining SDP and replace presence-by-any-message with correlated presence ping/pong.
+- [ ] Chain remote/local SDP operations through completion callbacks.
 - [ ] Run focused and existing unit tests.
 
 ### Task 5: Actual-State Acknowledgements
@@ -82,7 +86,9 @@ acknowledgements, and isolate Android-independent policies for JVM testing.
 - [ ] Write reducer tests for camera, mic, torch, cry, and parent-camera acknowledgements.
 - [ ] Run the focused test and confirm RED.
 - [ ] Add baby state acknowledgement messages and a full state snapshot on ping.
+- [ ] Add a renewable parent-control lease and explicit disconnect signal that fail safe to OFF.
 - [ ] Update parent state only from confirmed acknowledgements, with bounded optimistic feedback.
+- [ ] Guard LiveSession callbacks with a session generation and connection identity.
 - [ ] Disable flip/snapshot/quality actions when camera is OFF where applicable.
 - [ ] Update baby status labels to show actual ON/OFF state.
 - [ ] Run focused and existing unit tests.
@@ -93,13 +99,22 @@ acknowledgements, and isolate Android-independent policies for JVM testing.
 - Create: `app/src/main/java/com/colworx/babycam/service/MonitorLifecycle.kt`
 - Create: `app/src/test/java/com/colworx/babycam/service/MonitorLifecycleTest.kt`
 - Modify: `app/src/main/java/com/colworx/babycam/service/MonitorService.kt`
+- Modify: `app/src/main/java/com/colworx/babycam/service/ParentMonitorService.kt`
+- Modify: `app/src/main/java/com/colworx/babycam/service/MonitorController.kt`
 - Modify: `app/src/main/java/com/colworx/babycam/service/BootReceiver.kt`
+- Modify: `app/src/main/AndroidManifest.xml`
+- Modify: `app/src/main/java/com/colworx/babycam/ui/AppNavigation.kt`
 
 - [ ] Write tests for default standby, cry enable/disable, and idempotent stop decisions.
 - [ ] Run the focused test and confirm RED.
 - [ ] Give the service a cancellable SupervisorJob and cancel it on destroy.
 - [ ] Stop and release AudioRecord from a deterministic cleanup path.
 - [ ] Ensure boot/service restart cannot activate cry detection automatically.
+- [ ] Gate saved-session restoration until app-lock state resolves and the user unlocks.
+- [ ] Replace zombie START_STICKY behavior with explicit session ownership or NOT_STICKY.
+- [ ] Remove idle parent wake lock and default auto-start OFF.
+- [ ] Use user-mediated reboot resume and accurate foreground-service types.
+- [ ] Fix notification preference/low-battery startup ordering.
 - [ ] Change notification text to accurate standby/active wording.
 - [ ] Run focused and existing unit tests.
 
