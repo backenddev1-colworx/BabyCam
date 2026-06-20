@@ -274,14 +274,26 @@ class WebRtcSession(
      */
     fun setCameraStandby(standby: Boolean): Boolean {
         if (standby == cameraStandby) return !standby && localVideoTrack?.enabled() == true
-        cameraStandby = standby
         val capturer = videoCapturer ?: return false
         if (standby) {
             try { capturer.stopCapture() } catch (e: Exception) { Log.w(TAG, "stopCapture failed: ${e.message}") }
             localVideoTrack?.setEnabled(false)
+            cameraStandby = true
         } else {
-            try { capturer.startCapture(capWidth, capHeight, capFps) } catch (e: Exception) { Log.w(TAG, "startCapture failed: ${e.message}") }
+            val started = try {
+                capturer.startCapture(capWidth, capHeight, capFps)
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "startCapture failed: ${e.message}")
+                false
+            }
+            if (!started) {
+                localVideoTrack?.setEnabled(false)
+                cameraStandby = true
+                return false
+            }
             localVideoTrack?.setEnabled(true)
+            cameraStandby = false
         }
         return !cameraStandby && localVideoTrack?.enabled() == true
     }

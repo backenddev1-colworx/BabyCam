@@ -275,7 +275,6 @@ class BabyCamConnection(
         val actual = when (name) {
             CONTROL_CAMERA -> {
                 session.setCameraStandby(!enabled)
-                if (enabled) !session.isCameraInStandby else session.isCameraInStandby
             }
             CONTROL_MICROPHONE -> session.setLocalAudioEnabled(enabled)
             CONTROL_TORCH -> controlTorch(enabled)
@@ -419,8 +418,7 @@ class BabyCamConnection(
     fun setParentCameraSharing(on: Boolean) {
         if (role != ConnRole.PARENT) return
         desiredState = desiredState.copy(parentCamera = on)
-        session.setCameraStandby(!on)
-        val actual = if (on) !session.isCameraInStandby else session.isCameraInStandby
+        val actual = session.setCameraStandby(!on)
         actualState = actualState.copy(parentCamera = actual)
         onControlState(actualState)
         sendControl(CONTROL_PARENT_CAMERA, actual)

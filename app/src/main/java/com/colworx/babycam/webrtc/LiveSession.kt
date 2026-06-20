@@ -116,40 +116,33 @@ object LiveSession {
      * independent of this, so audio-only listening with the camera off is just: cam off + mic on.
      */
     fun setRemoteCamera(on: Boolean) {
-        babyCamEnabled.value = on
         connection?.setRemoteCamera(on)
     }
 
     fun setRemoteMic(on: Boolean) {
-        babyMicEnabled.value = on
         connection?.setRemoteMic(on)
     }
 
     fun setTorch(on: Boolean) {
-        babyTorchOn.value = on
         connection?.setTorch(on)
     }
 
     fun setVideoEnabled(enabled: Boolean) {
-        babyCamEnabled.value = enabled
         connection?.setVideoEnabled(enabled)
     }
 
     /** Parent: turn the baby's cry detection on/off remotely (baby confirms via "cry_state"). */
     fun setRemoteCryDetection(on: Boolean) {
-        babyCryDetectionEnabled.value = on // optimistic; corrected by the baby's echo
         connection?.setRemoteCryDetection(on)
     }
 
     /** Parent: switch the baby's capture between battery-saver (low-res) and high quality. */
     fun setRemoteQuality(saver: Boolean) {
-        babyVideoSaver.value = saver
         connection?.setRemoteQuality(saver)
     }
 
     /** Parent: start/stop sharing the parent's own camera back to the baby (on-demand two-way). */
     fun setParentCameraSharing(on: Boolean) {
-        parentSharingCamera.value = on
         connection?.setParentCameraSharing(on)
     }
 

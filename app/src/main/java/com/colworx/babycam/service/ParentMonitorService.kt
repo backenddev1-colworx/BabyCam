@@ -92,4 +92,4 @@ class ParentMonitorService : Service() {
     }
 }
 
-const val PARENT_STANDBY_NOTIFICATION_TEXT = "Live audio and baby alerts are active"
+const val PARENT_STANDBY_NOTIFICATION_TEXT = "Connected · baby controls start off"

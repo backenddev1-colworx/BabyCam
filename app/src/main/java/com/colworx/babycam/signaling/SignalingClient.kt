@@ -152,7 +152,7 @@ class SignalingClient(
             val attemptClient = MqttClient(serverUri, clientId, MemoryPersistence())
             mqtt = attemptClient
 
-                attemptClient.setCallback(object : MqttCallbackExtended {
+            attemptClient.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                         if (!reconnect || !isCurrent(connectGeneration, attemptClient)) return
                         try {
@@ -205,32 +205,32 @@ class SignalingClient(
                     }
 
                     override fun deliveryComplete(token: IMqttDeliveryToken?) {}
-                })
+            })
 
-                val options = MqttConnectOptions().apply {
-                    isCleanSession = true
-                    isAutomaticReconnect = true
-                    keepAliveInterval = 30
-                    connectionTimeout = 15
-                }
+            val options = MqttConnectOptions().apply {
+                isCleanSession = true
+                isAutomaticReconnect = true
+                keepAliveInterval = 30
+                connectionTimeout = 15
+            }
 
-                attemptClient.connect(options)
+            attemptClient.connect(options)
+            if (!isGenerationCurrent(connectGeneration)) {
+                closeClient(attemptClient)
+                return false
+            }
+            attemptClient.subscribe(topic, 1)
+            synchronized(this) {
                 if (!isGenerationCurrent(connectGeneration)) {
                     closeClient(attemptClient)
                     return false
                 }
-                attemptClient.subscribe(topic, 1)
-                synchronized(this) {
-                    if (!isGenerationCurrent(connectGeneration)) {
-                        closeClient(attemptClient)
-                        return false
-                    }
-                    client = attemptClient
-                }
-                Log.d(TAG, "Connected and subscribed to $topic")
-                onState(true)
-                onReady(false)
-                return true
+                client = attemptClient
+            }
+            Log.d(TAG, "Connected and subscribed to $topic")
+            onState(true)
+            onReady(false)
+            return true
         } catch (e: Exception) {
             closeClient(mqtt)
             if (!isGenerationCurrent(connectGeneration)) return false

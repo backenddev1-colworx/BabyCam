@@ -133,6 +133,13 @@ fun BabyPairingScreen(
 
 @Composable
 fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
+    val camOn by LiveSession.babyCamEnabled
+    val micOn by LiveSession.babyMicEnabled
+    val cryOn by LiveSession.babyCryDetectionEnabled
+    val torchOn by LiveSession.babyTorchOn
+    val parentSharing by LiveSession.parentCamSharing
+    val anythingActive = camOn || micOn || cryOn || torchOn || parentSharing
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -146,9 +153,9 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             StatusPill(
-                text = "Monitoring active",
-                bg = TealBg,
-                fg = Teal
+                text = if (anythingActive) "Parent controls active" else "Standby · all controls off",
+                bg = if (anythingActive) TealBg else Color(0xFFFAEEDA),
+                fg = if (anythingActive) Teal else Color(0xFF854F0B)
             )
             Spacer(modifier = Modifier.weight(1f))
             IconButton(onClick = onSettings) {
@@ -169,7 +176,6 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
         ) {
             val connection = LiveSession.connection
             val localTrack by LiveSession.localVideo
-            val camOn by LiveSession.babyCamEnabled
             if (connection != null && camOn) {
                 VideoRenderer(
                     track = localTrack,
@@ -224,7 +230,6 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
 
             // Picture-in-picture of the parent's camera — only while the parent is actively
             // sharing it (on-demand two-way video). Hidden otherwise so there's no black box.
-            val parentSharing by LiveSession.parentCamSharing
             val parentTrack by LiveSession.remoteVideo
             if (parentSharing && parentTrack != null && connection != null) {
                 Box(
@@ -289,17 +294,20 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
             FeatureCard(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Outlined.PhotoCamera,
-                caption = "Camera"
+                caption = if (camOn) "Camera ON" else "Camera OFF",
+                active = camOn,
             )
             FeatureCard(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Outlined.Mic,
-                caption = "Mic"
+                caption = if (micOn) "Mic ON" else "Mic OFF",
+                active = micOn,
             )
             FeatureCard(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Outlined.Hearing,
-                caption = "Cry"
+                caption = if (cryOn) "Cry ON" else "Cry OFF",
+                active = cryOn,
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
@@ -313,7 +321,7 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
                 )
                 Spacer(modifier = Modifier.size(10.dp))
                 Text(
-                    text = "Runs in background & screen-off · auto-start on boot",
+                    text = "Parent controls start OFF · reboot requires tap to resume",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IndigoDeep
                 )
@@ -332,7 +340,8 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
 private fun FeatureCard(
     modifier: Modifier = Modifier,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    caption: String
+    caption: String,
+    active: Boolean = false,
 ) {
     AppCard(modifier = modifier) {
         Column(
@@ -343,14 +352,14 @@ private fun FeatureCard(
             Icon(
                 imageVector = icon,
                 contentDescription = caption,
-                tint = IndigoDeep,
+                tint = if (active) Teal else Muted,
                 modifier = Modifier.size(28.dp)
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = caption,
                 style = MaterialTheme.typography.labelSmall,
-                color = Muted,
+                color = if (active) Teal else Muted,
                 textAlign = TextAlign.Center
             )
         }

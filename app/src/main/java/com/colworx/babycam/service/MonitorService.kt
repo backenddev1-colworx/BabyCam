@@ -1,5 +1,6 @@
 package com.colworx.babycam.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,8 +18,10 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.colworx.babycam.MainActivity
 import com.colworx.babycam.audio.CryDetector
 import com.colworx.babycam.audio.Sensitivity
@@ -95,6 +98,9 @@ class MonitorService : Service() {
 
     private fun startAudioMonitor() {
         if (audioJob != null) return // already monitoring — avoid a second AudioRecord
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
         val sampleRate = 16000
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -191,7 +197,7 @@ class MonitorService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_SERVICE)
             .setContentTitle("BabyCam")
-            .setContentText("Monitoring is active")
+            .setContentText("Standby · camera, mic, and cry detection are off")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(pi)
             .setOngoing(true)

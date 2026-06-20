@@ -134,7 +134,7 @@ fun ChooseDeviceScreen(
                 icon = Icons.Outlined.PhotoCamera,
                 iconDescription = "Baby unit",
                 title = "Baby unit",
-                subtitle = "Stays with baby. Camera & mic on."
+                subtitle = "Stays with baby. Parent turns camera & mic on."
             )
         }
 

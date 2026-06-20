@@ -53,8 +53,8 @@ class ServicePrivacyPolicyTest {
     }
 
     @Test
-    fun parentStandbyNotification_mentionsAudioAndAlerts() {
-        assertTrue(PARENT_STANDBY_NOTIFICATION_TEXT.contains("audio", ignoreCase = true))
-        assertTrue(PARENT_STANDBY_NOTIFICATION_TEXT.contains("alerts", ignoreCase = true))
+    fun parentStandbyNotification_makesDefaultOffStateClear() {
+        assertTrue(PARENT_STANDBY_NOTIFICATION_TEXT.contains("connected", ignoreCase = true))
+        assertTrue(PARENT_STANDBY_NOTIFICATION_TEXT.contains("off", ignoreCase = true))
     }
 }

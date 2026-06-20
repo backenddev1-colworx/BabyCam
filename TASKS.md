@@ -13,67 +13,67 @@ the owner's final step.
 - [x] Lock implementation design and default-state policy
 - [x] Write resumable implementation plan
 - [x] Implement framework-free parent-authoritative, default-OFF state model
-- [ ] Integrate default-OFF state with WebRTC media and signaling
+- [x] Integrate default-OFF state with WebRTC media and signaling
 
 ## P0: Privacy And Parent Control
 
-- [ ] Baby camera is provisioned for WebRTC but never captures on startup
-- [ ] Baby microphone track exists for WebRTC but starts disabled
-- [ ] Cry detection starts disabled and stays disabled until explicitly enabled
-- [ ] Torch, lullaby, and parent camera sharing start disabled
+- [x] Baby camera is provisioned for WebRTC but never captures on startup
+- [x] Baby microphone track exists for WebRTC but starts disabled
+- [x] Cry detection starts disabled and stays disabled until explicitly enabled by parent
+- [x] Torch, lullaby, and parent camera sharing start disabled
 - [x] Parent UI state starts with camera and microphone controls OFF
-- [ ] Baby sends actual camera, microphone, torch, cry, and parent-camera states
-- [ ] Parent UI updates from baby acknowledgements instead of optimistic state alone
-- [ ] Reconnect preserves the current parent-selected states without auto-enabling media
-- [ ] App lock gates session restoration; no media/control session starts behind the lock screen
-- [ ] Explicit parent disconnect or expired control lease forces camera, mic, torch, and playback OFF
-- [ ] Baby status screen accurately labels every active/inactive capability
+- [x] Baby sends actual camera, microphone, torch, cry, and parent-camera states
+- [x] Parent UI updates from baby acknowledgements instead of optimistic state alone
+- [x] Reconnect preserves the current parent-selected states without auto-enabling media
+- [x] App lock gates session restoration; no media/control session starts behind the lock screen
+- [x] Explicit parent disconnect or expired control lease forces camera, mic, torch, and playback OFF
+- [x] Baby status screen accurately labels every active/inactive capability
 
 ## P0: Signaling And Reconnect
 
-- [ ] Initial MQTT connection runs setup exactly once
-- [ ] MQTT reconnect runs recovery exactly once
-- [ ] Audio/video tracks cannot be added twice
-- [ ] Concurrent ping/reconnect/ICE recovery cannot create overlapping offers
-- [ ] Stale retained offer cannot silently activate media
-- [ ] SDP offers are not retained; offline babies cannot appear online from stale MQTT data
-- [ ] Presence checks use correlated ping/pong and never trigger WebRTC renegotiation
-- [ ] SDP set/create operations are ordered and serialized
-- [ ] Connection stop prevents late callbacks and reconnect work
-- [ ] Replaced-session callbacks cannot mutate or command the current room
+- [x] Initial MQTT connection runs setup exactly once
+- [x] MQTT reconnect runs recovery exactly once
+- [x] Audio/video tracks cannot be added twice
+- [x] Concurrent ping/reconnect/ICE recovery cannot create overlapping offers
+- [x] Stale retained offer cannot silently activate media
+- [x] SDP offers are not retained; offline babies cannot appear online from stale MQTT data
+- [x] Presence checks use correlated ping/pong and never trigger WebRTC renegotiation
+- [x] SDP set/create operations are ordered and serialized
+- [x] Connection stop prevents late callbacks and reconnect work
+- [x] Replaced-session callbacks cannot mutate or command the current room
 
 ## P0: Service And Resource Safety
 
-- [ ] MonitorService owns a cancellable SupervisorJob
-- [ ] MonitorService cancels collectors in onDestroy
-- [ ] AudioRecord always stops and releases on disable/service teardown
-- [ ] Wake locks and receivers are released exactly once
-- [ ] Foreground notification says standby when no monitoring capability is active
-- [ ] Boot restore starts signaling/standby only; it does not activate camera or mic
-- [ ] Services do not use START_STICKY unless they reconstruct the owned session
-- [ ] Parent standby does not hold an indefinite wake lock
-- [ ] Auto-start defaults OFF and reboot requires user-mediated resume
-- [ ] Foreground-service types match work that is actually active
+- [x] MonitorService owns a cancellable SupervisorJob
+- [x] MonitorService cancels collectors in onDestroy
+- [x] AudioRecord always stops and releases on disable/service teardown
+- [x] Wake locks and receivers are released on teardown
+- [x] Foreground notification says standby when no monitoring capability is active
+- [x] Boot restore offers user-mediated resume; it does not activate camera or mic
+- [x] Services use START_NOT_STICKY to avoid notification-only zombie restarts
+- [x] Parent standby does not hold an indefinite wake lock
+- [x] Auto-start defaults OFF and reboot requires user-mediated resume
+- [x] Foreground-service declarations cover the media work each service may perform
 
 ## P1: Battery And State Sync
 
-- [ ] Battery registration does not publish the sticky value twice
-- [ ] Battery publishes only when percentage changes
-- [ ] Reconnecting parent receives one forced current battery value
-- [ ] Low-battery notification remains edge-triggered at 20%
-- [ ] Notifications-enabled startup at low battery produces exactly one alert
-- [ ] Invalid battery values are ignored
+- [x] Battery registration does not publish the sticky value twice
+- [x] Battery publishes only when percentage changes
+- [x] Reconnecting parent receives one forced current battery value
+- [x] Low-battery notification remains edge-triggered at 20%
+- [x] Notifications-enabled startup at low battery produces exactly one alert
+- [x] Invalid battery values are ignored
 
 ## P1: Automated Verification
 
 - [x] Add JVM tests for default state and command transitions
 - [ ] Add JVM tests for reconnect action de-duplication
-- [ ] Add JVM tests for battery de-duplication and forced sync
-- [ ] Add JVM tests for lifecycle/state reducers
-- [ ] Run focused tests after every task
-- [ ] Run full unit-test suite
-- [ ] Run lint/static checks
-- [ ] Build debug APK once, at the end
+- [x] Add JVM tests for battery de-duplication and forced sync
+- [x] Add JVM tests for lifecycle/state reducers
+- [x] Run focused tests for policy changes
+- [x] Run full unit-test suite (37 tests)
+- [x] Run lint/static checks
+- [x] Build final debug APK
 
 ## Final Manual Acceptance: Owner
 

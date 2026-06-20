@@ -38,8 +38,10 @@ subscription, ever.
   re-subscribe, ICE restart, ping-triggered re-offer) until the parent disconnects explicitly
 - **App lock** — PIN or biometric lock on app open
 - **4-digit pairing code** — no QR scanner, no account; baby shows a code, parent types it in
-- **Always-on baby unit** — foreground service keeps the camera/mic/signaling alive with the
-  screen off, and auto-starts after a reboot
+- **Parent-authoritative privacy** — camera, microphone, cry detection, torch, and playback start
+  OFF; the parent explicitly enables them while signaling remains reachable in standby
+- **Screen-off standby** — a foreground service keeps signaling reachable; after reboot the user
+  taps a notification to unlock and resume instead of silently activating camera or microphone
 
 ## Tech stack (all free, no account required)
 

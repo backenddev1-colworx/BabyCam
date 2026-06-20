@@ -743,10 +743,15 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
                         LiveSession.setRemoteCryDetection(v)
                     }
                 } else {
-                    SwitchRow("Cry detection", cryEnabledBaby) { v ->
-                        scope.launch { prefs.setCryDetectionEnabled(v) }
-                        LiveSession.notifyCryStateChanged(v)
-                    }
+                    Text(
+                        text = if (cryEnabledBaby) {
+                            "Cry detection: ON by parent"
+                        } else {
+                            "Cry detection: OFF · controlled by parent"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (cryEnabledBaby) Teal else Muted,
+                    )
                 }
             }
         }
@@ -792,13 +797,14 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
                     autoStart = v
                     MonitorController.setAutoStart(context, v)
                 }
-                Spacer(Modifier.height(8.dp))
-                SwitchRow("Data-saver (audio only)", dataSaver) { v ->
-                    dataSaver = v
-                    scope.launch { prefs.setDataSaver(v) }
-                    // Real power-save: actually stop the baby's camera capturer (not just disable
-                    // the track), so audio-only mode genuinely saves the baby's battery/heat.
-                    LiveSession.setRemoteCamera(!v)
+                if (role == Role.PARENT) {
+                    Spacer(Modifier.height(8.dp))
+                    SwitchRow("Data-saver (audio only)", dataSaver) { v ->
+                        dataSaver = v
+                        scope.launch { prefs.setDataSaver(v) }
+                        // Real power-save: actually stop the baby's camera capturer.
+                        LiveSession.setRemoteCamera(!v)
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 SwitchRow("App lock (PIN/biometric)", lockEnabled) { v ->
