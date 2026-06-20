@@ -1,43 +1,82 @@
-# BabyCam — Autonomous Work Session Tasks
-_Started: 2026-06-16 (user offline)_
+# BabyCam Completion Tracker
 
-## ✅ DONE (this session)
-- [x] Commit parent screen overhaul (8854ac5)
-- [x] Push to GitHub
-- [x] Insets: safeDrawingPadding on WelcomeScreen, ChooseDeviceScreen (OnboardingScreens.kt)
-- [x] Insets: safeDrawingPadding on PermissionsScreen, BatterySetupScreen (SetupScreens.kt)
-- [x] Insets: safeDrawingPadding on AppLockScreen
-- [x] Insets: statusBarsPadding/navigationBarsPadding on ParentLiveScreen panels, LullabyPickerSheet
-- [x] Role-aware PermissionsScreen: camera only required for BABY role
-- [x] AppNavigation: pass pendingRole to PermissionsScreen
-- [x] MonitorService: read cry sensitivity from AppPreferences (was hardcoded MEDIUM)
-- [x] LiveSession.setVideoEnabled(): updates babyCamEnabled state
-- [x] VideoRenderer: removes sink from old track on dispose (memory leak fix)
-- [x] SettingsScreen: About dialog (was firing onBack instead)
-- [x] SettingsScreen: "Forget pairing" option, conditional on saved room
-- [x] AppNavigation: onForgetPairing callback clears parentRoom + navigates to ParentScan
-- [x] Deleted QrCodes.kt (unused, QR era)
-- [x] Removed ZXing deps from app/build.gradle.kts
-- [x] Build verified clean (`./gradlew assembleDebug` — BUILD SUCCESSFUL)
-- [x] Committed + pushed (ccb0b18)
+_Updated: 2026-06-20_
 
-## 🔧 IN PROGRESS
-None.
+This file is the source of truth for autonomous work. Check items only after the
+corresponding automated verification passes. Real-device acceptance testing remains
+the owner's final step.
 
-## 📋 PENDING FIXES
-None known. All items from this session's audit are resolved and verified.
+## Current
 
-## 🚫 BLOCKERS
-None.
+- [x] Disconnect parent and baby Wi-Fi ADB devices
+- [x] Review current media, signaling, service, and UI state
+- [x] Lock implementation design and default-state policy
+- [x] Write resumable implementation plan
+- [ ] Implement parent-authoritative, default-OFF media state
 
-## 📊 STATUS
-Build: ✅ Successful (ccb0b18)
-GitHub: ✅ Pushed (ccb0b18)
+## P0: Privacy And Parent Control
 
-## ⚠️ NOT independently re-verified in this session (carried over from earlier work, believed working but not re-tested on a device this round)
-- WebRTC Talk fix (pre-added muted audio track) — implemented in earlier commit, not re-tested live
-- MQTT reconnect / re-subscribe flow (MqttCallbackExtended) — implemented, not re-tested live
-- ICE restart + ping-triggered re-offer reconnection — implemented, not re-tested live
-- Remote camera/mic/torch control signals — implemented, not re-tested live
+- [ ] Baby camera is provisioned for WebRTC but never captures on startup
+- [ ] Baby microphone track exists for WebRTC but starts disabled
+- [ ] Cry detection starts disabled and stays disabled until explicitly enabled
+- [ ] Torch, lullaby, and parent camera sharing start disabled
+- [ ] Parent UI starts with camera and microphone controls OFF
+- [ ] Baby sends actual camera, microphone, torch, cry, and parent-camera states
+- [ ] Parent UI updates from baby acknowledgements instead of optimistic state alone
+- [ ] Reconnect preserves the current parent-selected states without auto-enabling media
+- [ ] Baby status screen accurately labels every active/inactive capability
 
-These are logic-complete and compile clean, but actual end-to-end behavior (two real phones pairing, talking, surviving a network drop) has not been manually verified in this session. Recommend a live test pass on two devices before considering the app fully release-ready.
+## P0: Signaling And Reconnect
+
+- [ ] Initial MQTT connection runs setup exactly once
+- [ ] MQTT reconnect runs recovery exactly once
+- [ ] Audio/video tracks cannot be added twice
+- [ ] Concurrent ping/reconnect/ICE recovery cannot create overlapping offers
+- [ ] Stale retained offer cannot silently activate media
+- [ ] Connection stop prevents late callbacks and reconnect work
+
+## P0: Service And Resource Safety
+
+- [ ] MonitorService owns a cancellable SupervisorJob
+- [ ] MonitorService cancels collectors in onDestroy
+- [ ] AudioRecord always stops and releases on disable/service teardown
+- [ ] Wake locks and receivers are released exactly once
+- [ ] Foreground notification says standby when no monitoring capability is active
+- [ ] Boot restore starts signaling/standby only; it does not activate camera or mic
+
+## P1: Battery And State Sync
+
+- [ ] Battery registration does not publish the sticky value twice
+- [ ] Battery publishes only when percentage changes
+- [ ] Reconnecting parent receives one forced current battery value
+- [ ] Low-battery notification remains edge-triggered at 20%
+- [ ] Invalid battery values are ignored
+
+## P1: Automated Verification
+
+- [ ] Add JVM tests for default state and command transitions
+- [ ] Add JVM tests for reconnect action de-duplication
+- [ ] Add JVM tests for battery de-duplication and forced sync
+- [ ] Add JVM tests for lifecycle/state reducers
+- [ ] Run focused tests after every task
+- [ ] Run full unit-test suite
+- [ ] Run lint/static checks
+- [ ] Build debug APK once, at the end
+
+## Final Manual Acceptance: Owner
+
+- [ ] Install final APK on both physical phones
+- [ ] Confirm baby launch shows camera/mic/cry/torch OFF
+- [ ] Confirm no camera or microphone privacy indicator appears before parent action
+- [ ] Toggle every parent control ON and OFF and verify baby response
+- [ ] Lock/background both phones and repeat controls
+- [ ] Drop/rejoin Wi-Fi and verify state-preserving reconnect
+- [ ] Test separate networks and TURN relay
+- [ ] Verify talk audio, camera flip, torch result, cry alert, battery update, and snapshots
+- [ ] Capture final dual-device logcat and confirm no crash, ANR, duplicate tracks, or signaling spam
+
+## Known External Constraint
+
+- Reliable torch control while WebRTC owns the camera is OEM/library dependent. The app must
+  report the real result and never display a false ON state. A universal torch guarantee requires
+  replacing or forking the current WebRTC Camera2 capturer.
