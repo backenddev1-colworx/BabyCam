@@ -13,6 +13,7 @@ import org.webrtc.VideoTrack
  */
 object LiveSession {
     private val initialMonitoringState = MonitoringSessionDefaults.initial()
+    private var generation = 0L
 
     var connection: BabyCamConnection? = null
         private set
@@ -52,16 +53,22 @@ object LiveSession {
 
     fun startBaby(context: Context, room: String) {
         stop()
+        val activeGeneration = generation
         this.room = room
         connection = BabyCamConnection(
             context.applicationContext, ConnRole.BABY, room,
             // Baby receives the parent's camera (on-demand two-way) on this track.
-            onRemoteVideo = { remoteVideo.value = it },
-            onLocalVideo = { localVideo.value = it },
-            onState = { connState.value = it },
-            onSignalingUp = { signalingUp.value = it },
-            onBatteryUpdate = { babyBattery.value = it },
-            onCryAlert = { cryPing.value = cryPing.value + 1 },
+            onRemoteVideo = { if (generation == activeGeneration) remoteVideo.value = it },
+            onLocalVideo = { if (generation == activeGeneration) localVideo.value = it },
+            onState = { if (generation == activeGeneration) connState.value = it },
+            onSignalingUp = { if (generation == activeGeneration) signalingUp.value = it },
+            onBatteryUpdate = { if (generation == activeGeneration) babyBattery.value = it },
+            onCryAlert = {
+                if (generation == activeGeneration) cryPing.value = cryPing.value + 1
+            },
+            onControlState = {
+                if (generation == activeGeneration) applyControlState(it, parent = false)
+            },
         ).also { it.start() }
     }
 
@@ -71,18 +78,26 @@ object LiveSession {
      */
     fun startParent(context: Context, room: String, initialMicOn: Boolean = false) {
         stop()
+        val activeGeneration = generation
         this.room = room
         val initialState = MonitoringSessionDefaults.initial(initialMicOn)
         babyCamEnabled.value = initialState.babyCamEnabled
         babyMicEnabled.value = initialState.babyMicEnabled
         val conn = BabyCamConnection(
             context.applicationContext, ConnRole.PARENT, room,
-            onRemoteVideo = { remoteVideo.value = it },
-            onState = { connState.value = it },
-            onSignalingUp = { signalingUp.value = it },
-            onBatteryUpdate = { babyBattery.value = it },
-            onCryAlert = { cryPing.value = cryPing.value + 1 },
-            onTorchState = { babyTorchOn.value = it },
+            onRemoteVideo = { if (generation == activeGeneration) remoteVideo.value = it },
+            onState = { if (generation == activeGeneration) connState.value = it },
+            onSignalingUp = { if (generation == activeGeneration) signalingUp.value = it },
+            onBatteryUpdate = { if (generation == activeGeneration) babyBattery.value = it },
+            onCryAlert = {
+                if (generation == activeGeneration) cryPing.value = cryPing.value + 1
+            },
+            onTorchState = {
+                if (generation == activeGeneration) babyTorchOn.value = it
+            },
+            onControlState = {
+                if (generation == activeGeneration) applyControlState(it, parent = true)
+            },
         )
         connection = conn
         conn.start()
@@ -168,6 +183,7 @@ object LiveSession {
     }
 
     fun stop() {
+        generation++
         val resetState = MonitoringSessionDefaults.reset()
         connection?.stop()
         connection = null
@@ -183,5 +199,15 @@ object LiveSession {
         babyVideoSaver.value = resetState.babyVideoSaver
         parentSharingCamera.value = resetState.parentSharingCamera
         parentCamSharing.value = resetState.parentCamSharing
+    }
+
+    private fun applyControlState(state: SessionControlState, parent: Boolean) {
+        babyCamEnabled.value = state.camera
+        babyMicEnabled.value = state.microphone
+        babyTorchOn.value = state.torch
+        babyCryDetectionEnabled.value = state.cryDetection
+        babyVideoSaver.value = state.videoSaver
+        if (parent) parentSharingCamera.value = state.parentCamera
+        else parentCamSharing.value = state.parentCamera
     }
 }

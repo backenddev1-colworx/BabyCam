@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioManager
 import android.util.Log
 import org.webrtc.AudioTrack
+import org.webrtc.AudioSource
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraVideoCapturer
 import org.webrtc.DefaultVideoDecoderFactory
@@ -51,6 +52,7 @@ class WebRtcSession(
     private var videoCapturer: CameraVideoCapturer? = null
     private var videoSource: VideoSource? = null
     private var surfaceHelper: SurfaceTextureHelper? = null
+    private var audioSource: AudioSource? = null
     var localVideoTrack: VideoTrack? = null
         private set
     var localAudioTrack: AudioTrack? = null
@@ -133,19 +135,23 @@ class WebRtcSession(
         })
     }
 
-    /** Baby side: start the front/back camera and add a local video track. */
+    /**
+     * Provisions the camera track without opening the camera. Capture starts only after an
+     * explicit [setCameraStandby] call with `false`.
+     */
     fun startCamera(useFront: Boolean = false) {
+        if (localVideoTrack != null) return
         val capturer = createCameraCapturer(useFront) ?: return
         videoCapturer = capturer
         val source = factory.createVideoSource(capturer.isScreencast)
         videoSource = source
         surfaceHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
         capturer.initialize(surfaceHelper, appContext, source.capturerObserver)
-        capturer.startCapture(capWidth, capHeight, capFps)
         val track = factory.createVideoTrack("VIDEO", source)
-        track.setEnabled(true)
+        track.setEnabled(false)
         localVideoTrack = track
         peerConnection?.addTrack(track, listOf("STREAM"))
+        cameraStandby = true
     }
 
     /**
@@ -156,11 +162,13 @@ class WebRtcSession(
      * video m-line #0 and this receive slot is video m-line #1 (the parent relies on that order).
      */
     fun addParentVideoReceiveSlot() {
+        if (parentVideoReceiveSlotAdded) return
         try {
             peerConnection?.addTransceiver(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
                 RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
             )
+            parentVideoReceiveSlotAdded = true
         } catch (e: Exception) {
             // If this fails the core baby->parent stream is unaffected; two-way video just won't
             // be available. Never let it break the primary monitor function.
@@ -226,20 +234,33 @@ class WebRtcSession(
         }
     }
 
-    /** Add a local microphone audio track (baby always; parent only while talking). */
+    /** Provisions one disabled local microphone track. */
     fun startAudio() {
-        val audioSource = factory.createAudioSource(MediaConstraints())
-        val track = factory.createAudioTrack("AUDIO", audioSource)
-        track.setEnabled(true)
+        if (localAudioTrack != null) return
+        val source = factory.createAudioSource(MediaConstraints())
+        audioSource = source
+        val track = factory.createAudioTrack("AUDIO", source)
+        track.setEnabled(false)
         localAudioTrack = track
         peerConnection?.addTrack(track, listOf("STREAM"))
     }
 
-    fun setLocalAudioEnabled(enabled: Boolean) { localAudioTrack?.setEnabled(enabled) }
-    fun setLocalVideoEnabled(enabled: Boolean) { localVideoTrack?.setEnabled(enabled) }
+    fun setLocalAudioEnabled(enabled: Boolean): Boolean {
+        val track = localAudioTrack ?: return false
+        track.setEnabled(enabled)
+        return track.enabled()
+    }
+
+    fun setLocalVideoEnabled(enabled: Boolean): Boolean {
+        val track = localVideoTrack ?: return false
+        track.setEnabled(enabled)
+        return track.enabled()
+    }
     fun switchCamera() { videoCapturer?.switchCamera(null) }
 
     private var cameraStandby = false
+    private var parentVideoReceiveSlotAdded = false
+    private var offerInProgress = false
     val isCameraInStandby: Boolean get() = cameraStandby
 
     /**
@@ -251,10 +272,10 @@ class WebRtcSession(
      * real battery/heat cost is. [startCapture] resumes it when the parent turns the camera back
      * on. The track itself is left in place (no renegotiation needed) — only enabled/disabled.
      */
-    fun setCameraStandby(standby: Boolean) {
-        if (standby == cameraStandby) return
+    fun setCameraStandby(standby: Boolean): Boolean {
+        if (standby == cameraStandby) return !standby && localVideoTrack?.enabled() == true
         cameraStandby = standby
-        val capturer = videoCapturer ?: return
+        val capturer = videoCapturer ?: return false
         if (standby) {
             try { capturer.stopCapture() } catch (e: Exception) { Log.w(TAG, "stopCapture failed: ${e.message}") }
             localVideoTrack?.setEnabled(false)
@@ -262,6 +283,7 @@ class WebRtcSession(
             try { capturer.startCapture(capWidth, capHeight, capFps) } catch (e: Exception) { Log.w(TAG, "startCapture failed: ${e.message}") }
             localVideoTrack?.setEnabled(true)
         }
+        return !cameraStandby && localVideoTrack?.enabled() == true
     }
 
     /**
@@ -292,29 +314,93 @@ class WebRtcSession(
         return names.firstOrNull()?.let { enumerator.createCapturer(it, null) }
     }
 
-    fun createOffer(iceRestart: Boolean = false, onCreated: (SessionDescription) -> Unit) {
-        val pc = peerConnection ?: return
+    @Synchronized
+    fun createOffer(
+        iceRestart: Boolean = false,
+        onCreated: (SessionDescription) -> Unit,
+        onFailure: () -> Unit = {},
+    ): Boolean {
+        val pc = peerConnection ?: return false
+        if (offerInProgress) return false
+        offerInProgress = true
         val constraints = MediaConstraints().apply {
             if (iceRestart) {
                 mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
             }
         }
-        pc.createOffer(simpleSdpObserver { sdp ->
-            pc.setLocalDescription(simpleSdpObserver(), sdp)
-            onCreated(sdp)
+        pc.createOffer(object : SdpObserver {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                pc.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() {
+                        finishOffer()
+                        onCreated(sdp)
+                    }
+
+                    override fun onSetFailure(error: String?) {
+                        Log.e(TAG, "Set local offer failed: $error")
+                        finishOffer()
+                        onFailure()
+                    }
+
+                    override fun onCreateSuccess(sdp: SessionDescription?) = Unit
+                    override fun onCreateFailure(error: String?) = Unit
+                }, sdp)
+            }
+
+            override fun onCreateFailure(error: String?) {
+                Log.e(TAG, "Create offer failed: $error")
+                finishOffer()
+                onFailure()
+            }
+
+            override fun onSetSuccess() = Unit
+            override fun onSetFailure(error: String?) = Unit
         }, constraints)
+        return true
     }
 
-    fun createAnswer(onCreated: (SessionDescription) -> Unit) {
+    fun createAnswer(onCreated: (SessionDescription) -> Unit, onFailure: () -> Unit = {}) {
         val pc = peerConnection ?: return
-        pc.createAnswer(simpleSdpObserver { sdp ->
-            pc.setLocalDescription(simpleSdpObserver(), sdp)
-            onCreated(sdp)
+        pc.createAnswer(object : SdpObserver {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                pc.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() = onCreated(sdp)
+                    override fun onSetFailure(error: String?) {
+                        Log.e(TAG, "Set local answer failed: $error")
+                        onFailure()
+                    }
+
+                    override fun onCreateSuccess(sdp: SessionDescription?) = Unit
+                    override fun onCreateFailure(error: String?) = Unit
+                }, sdp)
+            }
+
+            override fun onCreateFailure(error: String?) {
+                Log.e(TAG, "Create answer failed: $error")
+                onFailure()
+            }
+
+            override fun onSetSuccess() = Unit
+            override fun onSetFailure(error: String?) = Unit
         }, MediaConstraints())
     }
 
-    fun setRemoteDescription(sdp: SessionDescription) {
-        peerConnection?.setRemoteDescription(simpleSdpObserver(), sdp)
+    fun setRemoteDescription(
+        sdp: SessionDescription,
+        onSuccess: () -> Unit = {},
+        onFailure: () -> Unit = {},
+    ) {
+        val pc = peerConnection ?: return
+        pc.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() = onSuccess()
+            override fun onSetFailure(error: String?) {
+                Log.e(TAG, "Set remote SDP failed: $error")
+                onFailure()
+            }
+
+            override fun onCreateSuccess(sdp: SessionDescription?) = Unit
+            override fun onCreateFailure(error: String?) = Unit
+        }, sdp)
     }
 
     fun addRemoteIceCandidate(candidate: IceCandidate) {
@@ -325,6 +411,7 @@ class WebRtcSession(
         try { videoCapturer?.stopCapture() } catch (_: Exception) {}
         videoCapturer?.dispose()
         videoSource?.dispose()
+        audioSource?.dispose()
         surfaceHelper?.dispose()
         peerConnection?.close()
         peerConnection = null
@@ -332,11 +419,9 @@ class WebRtcSession(
         restoreAudioRouting()
     }
 
-    private fun simpleSdpObserver(onCreate: ((SessionDescription) -> Unit)? = null) = object : SdpObserver {
-        override fun onCreateSuccess(sdp: SessionDescription) { onCreate?.invoke(sdp) }
-        override fun onSetSuccess() {}
-        override fun onCreateFailure(error: String?) { Log.e(TAG, "SDP create failed: $error") }
-        override fun onSetFailure(error: String?) { Log.e(TAG, "SDP set failed: $error") }
+    @Synchronized
+    private fun finishOffer() {
+        offerInProgress = false
     }
 
     companion object {

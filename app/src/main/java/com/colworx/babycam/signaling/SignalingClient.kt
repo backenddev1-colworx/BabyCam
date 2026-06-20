@@ -9,6 +9,7 @@ import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.spec.SecretKeySpec
 
 /**
@@ -53,8 +54,8 @@ class SignalingClient(
     private lateinit var key: SecretKeySpec
     private var topic = ""
 
-    /** Set by [close]; stops the initial-connection retry loop from reconnecting after teardown. */
     @Volatile private var closed = false
+    private val generation = AtomicLong(0)
 
     /**
      * Connects to the broker, subscribes to the room topic and relays messages.
@@ -69,9 +70,11 @@ class SignalingClient(
     fun connect(
         room: String,
         onMessage: (SignalMessage) -> Unit,
-        onReconnected: (() -> Unit)? = null,
+        onReady: (reconnected: Boolean) -> Unit = {},
         onState: (Boolean) -> Unit
     ) {
+        close()
+        val connectGeneration = generation.incrementAndGet()
         topic = "babycam/$room"
         key = SignalCrypto.keyFromRoom(room)
         closed = false
@@ -83,7 +86,7 @@ class SignalingClient(
             // device permanently offline — fatal for a baby monitor. Retries until connected or
             // close() is called.
             var attempt = 0
-            while (!closed) {
+            while (isCurrent(connectGeneration)) {
                 attempt++
                 // Resolve to concrete IPv4 addresses and try each. On NAT64/DNS64 networks the
                 // hostname resolves to a synthesized IPv6 address whose NAT64 gateway refuses the
@@ -92,11 +95,17 @@ class SignalingClient(
                 val urls = resolveBrokerUrls()
                 var ok = false
                 for (url in urls) {
-                    if (closed) break
-                    ok = tryConnect(url, onMessage, onReconnected, onState)
+                    if (!isCurrent(connectGeneration)) break
+                    ok = tryConnect(
+                        serverUri = url,
+                        connectGeneration = connectGeneration,
+                        onMessage = onMessage,
+                        onReady = onReady,
+                        onState = onState,
+                    )
                     if (ok) break
                 }
-                if (ok || closed) break
+                if (ok || !isCurrent(connectGeneration)) break
                 val backoffMs = minOf(2000L * attempt, 15000L)
                 Log.w(TAG, "All broker addresses failed (attempt $attempt); retrying in ${backoffMs}ms")
                 try { Thread.sleep(backoffMs) } catch (_: InterruptedException) { break }
@@ -131,35 +140,44 @@ class SignalingClient(
      */
     private fun tryConnect(
         serverUri: String,
+        connectGeneration: Long,
         onMessage: (SignalMessage) -> Unit,
-        onReconnected: (() -> Unit)?,
+        onReady: (reconnected: Boolean) -> Unit,
         onState: (Boolean) -> Unit
     ): Boolean {
-            try {
-                val clientId = "babycam-$selfId-${System.currentTimeMillis()}"
-                Log.d(TAG, "Connecting to $serverUri, topic=$topic, clientId=$clientId")
-                val mqtt = MqttClient(serverUri, clientId, MemoryPersistence())
+        var mqtt: MqttClient? = null
+        try {
+            val clientId = "babycam-$selfId-${System.currentTimeMillis()}"
+            Log.d(TAG, "Connecting to $serverUri, topic=$topic, clientId=$clientId")
+            val attemptClient = MqttClient(serverUri, clientId, MemoryPersistence())
+            mqtt = attemptClient
 
-                mqtt.setCallback(object : MqttCallbackExtended {
+                attemptClient.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                        if (reconnect) {
-                            try {
-                                mqtt.subscribe(topic, 1)
-                                Log.d(TAG, "Reconnected and re-subscribed to $topic")
-                                onState(true)
-                                onReconnected?.invoke()
-                            } catch (e: Exception) {
+                        if (!reconnect || !isCurrent(connectGeneration, attemptClient)) return
+                        try {
+                            attemptClient.subscribe(topic, 1)
+                            if (!isCurrent(connectGeneration, attemptClient)) return
+                            Log.d(TAG, "Reconnected and re-subscribed to $topic")
+                            onState(true)
+                            onReady(true)
+                        } catch (e: Exception) {
+                            if (isCurrent(connectGeneration, attemptClient)) {
                                 Log.e(TAG, "Re-subscribe after reconnect failed: ${e.message}")
+                                onState(false)
                             }
                         }
                     }
 
                     override fun connectionLost(cause: Throwable?) {
-                        Log.w(TAG, "Connection lost: ${cause?.message}")
-                        onState(false)
+                        if (isCurrent(connectGeneration, attemptClient)) {
+                            Log.w(TAG, "Connection lost: ${cause?.message}")
+                            onState(false)
+                        }
                     }
 
                     override fun messageArrived(topic: String?, message: MqttMessage?) {
+                        if (!isCurrent(connectGeneration, attemptClient)) return
                         val raw = message?.payload ?: return
                         val plain = try {
                             SignalCrypto.decrypt(key, String(raw, Charsets.UTF_8))
@@ -167,11 +185,11 @@ class SignalingClient(
                             Log.w(TAG, "Decrypt failed: ${e.message}")
                             ""
                         }
-                        if (plain.isEmpty()) return
+                        if (plain.isEmpty() || !isCurrent(connectGeneration, attemptClient)) return
 
                         val json = try {
                             JSONObject(plain)
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             return
                         }
 
@@ -196,21 +214,48 @@ class SignalingClient(
                     connectionTimeout = 15
                 }
 
-                mqtt.connect(options)
-                mqtt.subscribe(topic, 1)
-                client = mqtt
+                attemptClient.connect(options)
+                if (!isGenerationCurrent(connectGeneration)) {
+                    closeClient(attemptClient)
+                    return false
+                }
+                attemptClient.subscribe(topic, 1)
+                synchronized(this) {
+                    if (!isGenerationCurrent(connectGeneration)) {
+                        closeClient(attemptClient)
+                        return false
+                    }
+                    client = attemptClient
+                }
                 Log.d(TAG, "Connected and subscribed to $topic")
                 onState(true)
+                onReady(false)
                 return true
-            } catch (e: Exception) {
-                // Paho wraps the real failure (DNS, refused, timeout, TLS) as a generic
-                // "Unable to connect to server" — walk the cause chain to log the actual reason.
-                val rootCause = generateSequence(e as Throwable) { it.cause }
-                    .joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message}" }
-                Log.e(TAG, "MQTT connect failed: $rootCause")
-                onState(false)
-                return false
-            }
+        } catch (e: Exception) {
+            closeClient(mqtt)
+            if (!isGenerationCurrent(connectGeneration)) return false
+            val rootCause = generateSequence(e as Throwable) { it.cause }
+                .joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message}" }
+            Log.e(TAG, "MQTT connect failed: $rootCause")
+            onState(false)
+            return false
+        }
+    }
+
+    private fun isGenerationCurrent(connectGeneration: Long): Boolean =
+        !closed && generation.get() == connectGeneration
+
+    private fun isCurrent(connectGeneration: Long, mqtt: MqttClient? = null): Boolean {
+        if (!isGenerationCurrent(connectGeneration)) return false
+        return mqtt == null || synchronized(this) { client === mqtt }
+    }
+
+    private fun closeClient(mqtt: MqttClient?) {
+        if (mqtt == null) return
+        runCatching {
+            if (mqtt.isConnected) mqtt.disconnect(0)
+            mqtt.close()
+        }
     }
 
     /**
@@ -220,6 +265,7 @@ class SignalingClient(
      * @param payload opaque string payload.
      */
     fun send(type: String, payload: String, retained: Boolean = false) {
+        if (closed) return
         try {
             val json = JSONObject().apply {
                 put("type", type)
@@ -245,16 +291,18 @@ class SignalingClient(
     /** Disconnects and releases the MQTT client. */
     fun close() {
         closed = true
+        generation.incrementAndGet()
+        val mqtt = synchronized(this) {
+            client.also { client = null }
+        }
         try {
             // disconnect(0) = immediate, don't wait for in-flight messages.
             // The default disconnect() uses a 30-second quiesce timeout, which blocks
             // the calling thread (often the main thread) and causes an ANR.
-            client?.disconnect(0)
-            client?.close()
+            mqtt?.disconnect(0)
+            mqtt?.close()
         } catch (e: Exception) {
             // Ignore.
-        } finally {
-            client = null
-        }
+        } finally { }
     }
 }
