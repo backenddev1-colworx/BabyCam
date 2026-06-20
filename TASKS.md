@@ -12,7 +12,8 @@ the owner's final step.
 - [x] Review current media, signaling, service, and UI state
 - [x] Lock implementation design and default-state policy
 - [x] Write resumable implementation plan
-- [ ] Implement parent-authoritative, default-OFF media state
+- [x] Implement framework-free parent-authoritative, default-OFF state model
+- [ ] Integrate default-OFF state with WebRTC media and signaling
 
 ## P0: Privacy And Parent Control
 
@@ -20,7 +21,7 @@ the owner's final step.
 - [ ] Baby microphone track exists for WebRTC but starts disabled
 - [ ] Cry detection starts disabled and stays disabled until explicitly enabled
 - [ ] Torch, lullaby, and parent camera sharing start disabled
-- [ ] Parent UI starts with camera and microphone controls OFF
+- [x] Parent UI state starts with camera and microphone controls OFF
 - [ ] Baby sends actual camera, microphone, torch, cry, and parent-camera states
 - [ ] Parent UI updates from baby acknowledgements instead of optimistic state alone
 - [ ] Reconnect preserves the current parent-selected states without auto-enabling media
@@ -65,7 +66,7 @@ the owner's final step.
 
 ## P1: Automated Verification
 
-- [ ] Add JVM tests for default state and command transitions
+- [x] Add JVM tests for default state and command transitions
 - [ ] Add JVM tests for reconnect action de-duplication
 - [ ] Add JVM tests for battery de-duplication and forced sync
 - [ ] Add JVM tests for lifecycle/state reducers
