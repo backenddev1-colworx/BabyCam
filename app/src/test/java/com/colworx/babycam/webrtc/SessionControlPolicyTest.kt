@@ -114,4 +114,45 @@ class SessionControlPolicyTest {
         assertFalse(cameraActualState(requestedOn = false, transitionSucceeded = false))
         assertFalse(cameraActualState(requestedOn = false, transitionSucceeded = true))
     }
+
+    @Test
+    fun audioSenderMutation_skipsRedundantDefaultOffDetach() {
+        assertFalse(shouldMutateAudioSender(enabled = false, hasAttachedTrack = false))
+        assertTrue(shouldMutateAudioSender(enabled = false, hasAttachedTrack = true))
+        assertTrue(shouldMutateAudioSender(enabled = true, hasAttachedTrack = false))
+        assertFalse(shouldMutateAudioSender(enabled = true, hasAttachedTrack = true))
+    }
+
+    @Test
+    fun mediaMutation_returnsFalseWhenNativeWrapperWasDisposed() {
+        assertFalse(
+            safeMediaMutation {
+                throw IllegalStateException("RtpSender has been disposed.")
+            },
+        )
+        assertTrue(safeMediaMutation { true })
+    }
+
+    @Test
+    fun applyControlResult_publishesUpdatedStateToBabyUi() {
+        var published: SessionControlState? = null
+
+        val result = applyControlResult(
+            current = SessionControlState(),
+            name = CONTROL_CAMERA,
+            actual = true,
+            publish = { published = it },
+        )
+
+        assertTrue(result.camera)
+        assertEquals(result, published)
+    }
+
+    @Test
+    fun torchCanEnable_onlyForActiveRearCameraSession() {
+        assertTrue(canEnableTorch(isFrontCamera = false, cameraStandby = false, sessionAvailable = true))
+        assertFalse(canEnableTorch(isFrontCamera = true, cameraStandby = false, sessionAvailable = true))
+        assertFalse(canEnableTorch(isFrontCamera = false, cameraStandby = true, sessionAvailable = true))
+        assertFalse(canEnableTorch(isFrontCamera = false, cameraStandby = false, sessionAvailable = false))
+    }
 }

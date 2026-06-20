@@ -72,6 +72,7 @@ class WebRtcSession(
     private var capWidth = 1280
     private var capHeight = 720
     private var capFps = 30
+    private var activeCameraIsFront = false
 
     /**
      * Google STUN + Metered TURN relay. STUN handles most NATs (direct/reflexive); TURN relays
@@ -272,32 +273,62 @@ class WebRtcSession(
     }
 
     fun setLocalAudioEnabled(enabled: Boolean): Boolean {
-        val transceiver = audioTransceiver ?: return false
-        if (!enabled) {
-            transceiver.sender.setTrack(null, false)
-            localAudioTrack?.dispose()
-            localAudioTrack = null
-            audioSource?.dispose()
-            audioSource = null
-            localAudioActive = false
+        return safeMediaMutation {
+            val transceiver = peerConnection?.transceivers
+                ?.firstOrNull { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
+                ?: audioTransceiver
+                ?: return@safeMediaMutation false
+            audioTransceiver = transceiver
+            val hasAttachedTrack = localAudioTrack != null
+            if (!shouldMutateAudioSender(enabled, hasAttachedTrack)) {
+                return@safeMediaMutation localAudioTrack?.enabled() == true
+            }
+            if (!enabled) {
+                // Use runCatching so an IllegalStateException from a closing PeerConnection
+                // never prevents the local track and source from being cleaned up — if setTrack
+                // threw and we skipped the dispose/null lines, the sender would keep streaming.
+                runCatching { transceiver.sender.setTrack(null, false) }
+                localAudioTrack?.dispose()
+                localAudioTrack = null
+                audioSource?.dispose()
+                audioSource = null
+                localAudioActive = false
+                updateAudioRouting()
+                return@safeMediaMutation false
+            }
+            val source = factory.createAudioSource(MediaConstraints())
+            audioSource = source
+            val track = factory.createAudioTrack("AUDIO", source)
+            track.setEnabled(true)
+            if (!transceiver.sender.setTrack(track, false)) {
+                track.dispose()
+                source.dispose()
+                audioSource = null
+                return@safeMediaMutation false
+            }
+            localAudioTrack = track
+            localAudioActive = true
             updateAudioRouting()
-            return false
+            true
         }
-        localAudioTrack?.let { return it.enabled() }
-        val source = factory.createAudioSource(MediaConstraints())
-        audioSource = source
-        val track = factory.createAudioTrack("AUDIO", source)
-        track.setEnabled(true)
-        if (!transceiver.sender.setTrack(track, false)) {
-            track.dispose()
-            source.dispose()
-            audioSource = null
-            return false
-        }
-        localAudioTrack = track
-        localAudioActive = true
+    }
+
+    // Called at the start of each parent-sync cycle to guarantee the audio sender has no track
+    // before the new offer is created, regardless of how the previous session ended. Without this,
+    // a failed fail-safe cleanup can leave the disposed track on the sender and audio leaks on
+    // reconnect even though both sides show mic OFF.
+    fun forceResetAudioSender() {
+        val transceiver = peerConnection?.transceivers
+            ?.firstOrNull { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
+            ?: audioTransceiver ?: return
+        audioTransceiver = transceiver
+        runCatching { transceiver.sender.setTrack(null, false) }
+        localAudioTrack?.dispose()
+        localAudioTrack = null
+        audioSource?.dispose()
+        audioSource = null
+        localAudioActive = false
         updateAudioRouting()
-        return true
     }
 
     fun setRemoteAudioPlaybackActive(active: Boolean) {
@@ -310,7 +341,35 @@ class WebRtcSession(
         track.setEnabled(enabled)
         return track.enabled()
     }
-    fun switchCamera() { videoCapturer?.switchCamera(null) }
+    fun switchCamera() {
+        setTorchEnabled(false)
+        videoCapturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                activeCameraIsFront = isFrontCamera
+            }
+
+            override fun onCameraSwitchError(errorDescription: String?) {
+                Log.w(TAG, "Camera switch failed: $errorDescription")
+            }
+        })
+    }
+
+    fun setTorchEnabled(enabled: Boolean): Boolean {
+        val capturer = videoCapturer
+        if (!enabled) {
+            Camera2TorchController.setTorch(capturer, false)
+            return false
+        }
+        if (!canEnableTorch(
+                isFrontCamera = activeCameraIsFront,
+                cameraStandby = cameraStandby,
+                sessionAvailable = Camera2TorchController.hasActiveSession(capturer),
+            )
+        ) {
+            return false
+        }
+        return Camera2TorchController.setTorch(capturer, true)
+    }
 
     private var cameraStandby = false
     private var parentVideoReceiveSlotAdded = false
@@ -377,9 +436,13 @@ class WebRtcSession(
         val enumerator = Camera2Enumerator(appContext)
         val names = enumerator.deviceNames
         names.firstOrNull { enumerator.isFrontFacing(it) == useFront }?.let {
+            activeCameraIsFront = enumerator.isFrontFacing(it)
             return enumerator.createCapturer(it, null)
         }
-        return names.firstOrNull()?.let { enumerator.createCapturer(it, null) }
+        return names.firstOrNull()?.let {
+            activeCameraIsFront = enumerator.isFrontFacing(it)
+            enumerator.createCapturer(it, null)
+        }
     }
 
     @Synchronized

@@ -4,8 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraManager
 import android.os.BatteryManager
 import android.os.SystemClock
 import android.util.Log
@@ -79,6 +77,7 @@ class BabyCamConnection(
     private var leaseJob: Job? = null
     private var heartbeatJob: Job? = null
     private var syncRetryJob: Job? = null
+    private var torchMaintenanceJob: Job? = null
     private val disconnectAcknowledged = CompletableDeferred<Unit>()
     private val batteryPublisher = BatteryPublisher { percentage ->
         if (hasAcceptedParentSync && !stopped.get()) sendBattery(percentage)
@@ -195,6 +194,10 @@ class BabyCamConnection(
         signaling.send("session_ready", syncId)
         if (!syncGate.accept(syncId)) return
         controlRevisionGate.reset()
+        // Guarantee the audio sender has no track before we create the new offer. If a previous
+        // session's fail-safe cleanup was interrupted by an ISE, the disposed track can stay on
+        // the sender and audio leaks to the parent even though both sides report mic OFF.
+        session.forceResetAudioSender()
         currentSyncId = syncId
         hasAcceptedParentSync = true
         refreshLease()
@@ -302,7 +305,7 @@ class BabyCamConnection(
                 refreshLease()
                 if (name == CONTROL_CRY) {
                     AppPreferences(context).setCryDetectionEnabled(enabled)
-                    actualState = actualState.withControl(name, enabled)
+                    actualState = applyControlResult(actualState, name, enabled, onControlState)
                     sendStateAck(commandId, revision, name, enabled)
                     return@withLock
                 }
@@ -310,7 +313,11 @@ class BabyCamConnection(
                 val actual = when (name) {
                     CONTROL_CAMERA -> session.setCameraStandby(!enabled)
                     CONTROL_MICROPHONE -> setBabyMicrophone(enabled)
-                    CONTROL_TORCH -> controlTorch(enabled)
+                    CONTROL_TORCH -> {
+                        val torchActual = controlTorch(enabled)
+                        maintainTorch(torchActual)
+                        torchActual
+                    }
                     CONTROL_LULLABY -> {
                         if (enabled) {
                             LullabyPlayer.play(LullabyPlayer.Sound.BELL, context.applicationContext)
@@ -331,7 +338,7 @@ class BabyCamConnection(
                     }
                     else -> return@withLock
                 }
-                actualState = actualState.withControl(name, actual)
+                actualState = applyControlResult(actualState, name, actual, onControlState)
                 sendStateAck(commandId, revision, name, actual)
             }
         }
@@ -409,6 +416,8 @@ class BabyCamConnection(
     private fun applyFailSafe(reason: String) {
         if (role != ConnRole.BABY) return
         Log.w(TAG, "Applying fail-safe OFF: $reason")
+        torchMaintenanceJob?.cancel()
+        torchMaintenanceJob = null
         session.setCameraStandby(true)
         setBabyMicrophone(false)
         controlTorch(false)
@@ -488,6 +497,8 @@ class BabyCamConnection(
         heartbeatJob?.cancel()
         leaseJob?.cancel()
         syncRetryJob?.cancel()
+        torchMaintenanceJob?.cancel()
+        torchMaintenanceJob = null
         LullabyPlayer.stop()
         if (role == ConnRole.BABY) setBabyMicrophone(false)
         batteryReceiver?.let { runCatching { context.applicationContext.unregisterReceiver(it) } }
@@ -562,17 +573,21 @@ class BabyCamConnection(
         }.getOrNull()?.let(session::addRemoteIceCandidate)
     }
 
-    private fun controlTorch(on: Boolean): Boolean = try {
-        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val cameraId = manager.cameraIdList.firstOrNull { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-        } ?: return false
-        manager.setTorchMode(cameraId, on)
-        on
-    } catch (e: Exception) {
-        Log.e(TAG, "Torch control failed: ${e.message}")
-        false
+    private fun controlTorch(on: Boolean): Boolean = session.setTorchEnabled(on)
+
+    // WebRTC's camera pipeline periodically re-submits its own repeating CaptureRequest (for
+    // autofocus / autoexposure), which overwrites our FLASH_MODE_TORCH setting and silently turns
+    // the torch off without any callback. Re-apply every 2 s while torch should be ON.
+    private fun maintainTorch(on: Boolean) {
+        torchMaintenanceJob?.cancel()
+        torchMaintenanceJob = null
+        if (!on || role != ConnRole.BABY) return
+        torchMaintenanceJob = scope.launch {
+            while (isActive && !stopped.get()) {
+                delay(2_000)
+                if (!stopped.get()) session.setTorchEnabled(true)
+            }
+        }
     }
 
     private fun setBabyMicrophone(enabled: Boolean): Boolean {

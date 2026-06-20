@@ -1,6 +1,6 @@
 # BabyCam Completion Tracker
 
-_Updated: 2026-06-20_
+_Updated: 2026-06-21_
 
 This file is the source of truth for autonomous work. Check items only after the
 corresponding automated verification passes. Real-device acceptance testing remains
@@ -18,6 +18,9 @@ the owner's final step.
 - [x] App-lock now blocks saved-session restoration until the user unlocks
 - [x] Service coroutine, AudioRecord, receiver, wake-lock, boot, and restart lifecycle hardened
 - [x] Baby and parent UI updated to display confirmed ON/OFF states
+- [x] Baby UI now receives every accepted control result, so local preview and parent PiP follow actual state
+- [x] Settings has a visible back action and handles the Android back gesture/button
+- [x] Rear-camera torch is applied through the active WebRTC Camera2 capture request
 - [x] Unit tests, lint, Kotlin compilation, and debug APK build completed successfully
 - [x] Debug hardening applied in the `main` working tree; physical devices kept disconnected
 
@@ -41,7 +44,19 @@ the owner's final step.
 - [x] Start presence response timeout only after MQTT is connected
 - [x] Enable communication audio routing only while an audio feature is active
 - [x] Remove indefinite standby wake-lock ownership
-- [x] Run 50 unit tests, lint, and one final debug APK build
+- [x] Move MQTT publishing off the UI thread while preserving signal order
+- [x] Guard media controls against disposed WebRTC sender wrappers
+- [x] Run the full unit suite and one final debug APK build
+
+## 2026-06-21 Device Verification
+
+- [x] Parent Settings screen shows a working back arrow
+- [x] Baby local rear-camera preview renders after the parent enables Camera
+- [x] Parent camera renders in the baby screen PiP after Share Cam is enabled
+- [x] Parent receives and renders the baby camera feed
+- [x] Samsung Camera2 capture request reports `FLASH_MODE_TORCH` while rear camera is active
+- [x] Both devices returned to camera, microphone, cry detection, torch, and sharing OFF
+- [x] No crash, ANR, or torch-controller error appeared during this verification
 
 ## Deferred Public Release Work
 
@@ -123,6 +138,6 @@ the owner's final step.
 
 ## Known External Constraint
 
-- Reliable torch control while WebRTC owns the camera is OEM/library dependent. The app must
-  report the real result and never display a false ON state. A universal torch guarantee requires
-  replacing or forking the current WebRTC Camera2 capturer.
+- Active-session torch control is verified on the connected Samsung SM-A065F. Other OEM camera
+  implementations still require final physical-device acceptance because WebRTC exposes no public
+  torch API and the implementation must integrate with its Camera2 repeating request.

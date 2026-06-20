@@ -117,6 +117,29 @@ class ParentSyncTracker {
 fun cameraActualState(requestedOn: Boolean, transitionSucceeded: Boolean): Boolean =
     requestedOn && transitionSucceeded
 
+fun shouldMutateAudioSender(enabled: Boolean, hasAttachedTrack: Boolean): Boolean =
+    enabled != hasAttachedTrack
+
+fun safeMediaMutation(action: () -> Boolean): Boolean =
+    try {
+        action()
+    } catch (_: IllegalStateException) {
+        false
+    }
+
+fun applyControlResult(
+    current: SessionControlState,
+    name: String,
+    actual: Boolean,
+    publish: (SessionControlState) -> Unit,
+): SessionControlState = current.withControl(name, actual).also(publish)
+
+fun canEnableTorch(
+    isFrontCamera: Boolean,
+    cameraStandby: Boolean,
+    sessionAvailable: Boolean,
+): Boolean = !isFrontCamera && !cameraStandby && sessionAvailable
+
 const val CONTROL_CAMERA = "camera"
 const val CONTROL_MICROPHONE = "microphone"
 const val CONTROL_TORCH = "torch"

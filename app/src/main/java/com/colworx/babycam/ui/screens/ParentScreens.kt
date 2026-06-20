@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.BatteryStd
 import androidx.compose.material.icons.outlined.CallEnd
@@ -638,6 +639,8 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
     val cryEnabledRemote by LiveSession.babyCryDetectionEnabled
     val savedQuality by prefs.videoQuality.collectAsState(initial = "HIGH")
 
+    BackHandler(onBack = onBack)
+
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
@@ -722,11 +725,23 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Text(
-            text = "Settings",
-            style = MaterialTheme.typography.titleLarge,
-            color = Indigo900
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Indigo900,
+                )
+            }
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.titleLarge,
+                color = Indigo900,
+            )
+        }
         Spacer(Modifier.height(16.dp))
 
         // Alerts & cry detection — both default OFF, opt-in here.

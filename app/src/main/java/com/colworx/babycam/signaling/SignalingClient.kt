@@ -56,6 +56,7 @@ class SignalingClient(
 
     @Volatile private var closed = false
     private val generation = AtomicLong(0)
+    private val sendDispatcher = SerialSignalDispatcher()
 
     /**
      * Connects to the broker, subscribes to the room topic and relays messages.
@@ -73,7 +74,7 @@ class SignalingClient(
         onReady: (reconnected: Boolean) -> Unit = {},
         onState: (Boolean) -> Unit
     ) {
-        close()
+        closeConnection()
         val connectGeneration = generation.incrementAndGet()
         topic = "babycam/$room"
         key = SignalCrypto.keyFromRoom(room)
@@ -266,21 +267,25 @@ class SignalingClient(
      */
     fun send(type: String, payload: String, retained: Boolean = false) {
         if (closed) return
-        try {
-            val json = JSONObject().apply {
-                put("type", type)
-                put("from", selfId)
-                put("payload", payload)
+        val sendGeneration = generation.get()
+        sendDispatcher.dispatch {
+            if (!isGenerationCurrent(sendGeneration)) return@dispatch
+            try {
+                val json = JSONObject().apply {
+                    put("type", type)
+                    put("from", selfId)
+                    put("payload", payload)
+                }
+                val encrypted = SignalCrypto.encrypt(key, json.toString())
+                val message = MqttMessage(encrypted.toByteArray(Charsets.UTF_8)).apply {
+                    qos = 1
+                    isRetained = retained
+                }
+                client?.publish(topic, message)
+                Log.d(TAG, "Sent [$type] retained=$retained")
+            } catch (e: Exception) {
+                Log.e(TAG, "Send [$type] failed: ${e.message}")
             }
-            val encrypted = SignalCrypto.encrypt(key, json.toString())
-            val message = MqttMessage(encrypted.toByteArray(Charsets.UTF_8)).apply {
-                qos = 1
-                isRetained = retained
-            }
-            client?.publish(topic, message)
-            Log.d(TAG, "Sent [$type] retained=$retained")
-        } catch (e: Exception) {
-            Log.e(TAG, "Send [$type] failed: ${e.message}")
         }
     }
 
@@ -290,6 +295,11 @@ class SignalingClient(
 
     /** Disconnects and releases the MQTT client. */
     fun close() {
+        closeConnection()
+        sendDispatcher.close()
+    }
+
+    private fun closeConnection() {
         closed = true
         generation.incrementAndGet()
         val mqtt = synchronized(this) {

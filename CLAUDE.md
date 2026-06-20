@@ -4,7 +4,7 @@
 Native Android baby monitor app. Package: `com.colworx.babycam`
 Repo: `/Users/applem2air/Documents/GitHub/BabyCam`
 GitHub: `https://github.com/mzashah/BabyCam`
-Git user: Colworx / backend.dev1@colworx.com — **NEVER add Co-Authored-By lines**
+Git user: mzashah / mz.ashah@outlook.com — **NEVER add Co-Authored-By lines**
 **Always ask before git commit or push** (unless the user has explicitly authorized autonomous
 work for a session — that authorization does not carry over to future sessions).
 
@@ -13,7 +13,8 @@ work for a session — that authorization does not carry over to future sessions
 - All services 100% free, no accounts, no credit card
 - Android-only (iOS excluded)
 - Do NOT build APK repeatedly — build once at the very end
-- Commits in user's name only (Colworx)
+- Commits in user's name only (mzashah / mz.ashah@outlook.com)
+- Both WapiBot and BabyCam are personal projects — always use mzashah GitHub account, never backenddev1-colworx
 
 ## Tech Stack
 - Kotlin + Jetpack Compose + Material3
