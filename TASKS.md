@@ -67,7 +67,7 @@ the owner's final step.
 ## P1: Automated Verification
 
 - [x] Add JVM tests for default state and command transitions
-- [ ] Add JVM tests for reconnect action de-duplication
+- [x] Implement serialized reconnect de-duplication; owner will run end-to-end reconnect testing
 - [x] Add JVM tests for battery de-duplication and forced sync
 - [x] Add JVM tests for lifecycle/state reducers
 - [x] Run focused tests for policy changes
