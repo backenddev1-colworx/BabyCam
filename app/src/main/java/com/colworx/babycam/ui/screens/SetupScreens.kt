@@ -65,12 +65,14 @@ private fun isGranted(context: android.content.Context, permission: String): Boo
 fun PermissionsScreen(role: Role = Role.NONE, onContinue: () -> Unit) {
     val context = LocalContext.current
 
-    // Camera is only needed for the baby unit (the parent only receives video).
-    val needsCamera = role != Role.PARENT
+    // Camera is REQUIRED for the baby (it streams video). For the parent it's OPTIONAL — only used
+    // if the parent later shares its own camera back (on-demand two-way) — so we still request it
+    // but never block setup when it's denied.
+    val cameraRequired = role != Role.PARENT
     val notificationsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
     var cameraGranted by remember {
-        mutableStateOf(if (needsCamera) isGranted(context, Manifest.permission.CAMERA) else true)
+        mutableStateOf(isGranted(context, Manifest.permission.CAMERA))
     }
     var micGranted by remember {
         mutableStateOf(isGranted(context, Manifest.permission.RECORD_AUDIO))
@@ -86,13 +88,13 @@ fun PermissionsScreen(role: Role = Role.NONE, onContinue: () -> Unit) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        if (needsCamera) result[Manifest.permission.CAMERA]?.let { cameraGranted = it }
+        result[Manifest.permission.CAMERA]?.let { cameraGranted = it }
         result[Manifest.permission.RECORD_AUDIO]?.let { micGranted = it }
         if (notificationsSupported) {
             result[Manifest.permission.POST_NOTIFICATIONS]?.let { notificationsGranted = it }
         }
         // Core requirements: camera (baby only) + mic
-        val coreOk = (if (needsCamera) cameraGranted else true) && micGranted
+        val coreOk = (if (cameraRequired) cameraGranted else true) && micGranted
         if (coreOk) onContinue()
     }
 
@@ -117,15 +119,14 @@ fun PermissionsScreen(role: Role = Role.NONE, onContinue: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(24.dp))
 
-            if (needsCamera) {
-                PermissionRow(
-                    icon = Icons.Outlined.PhotoCamera,
-                    label = "Camera",
-                    description = "See your baby in live video",
-                    granted = cameraGranted
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-            }
+            PermissionRow(
+                icon = Icons.Outlined.PhotoCamera,
+                label = "Camera",
+                description = if (role == Role.PARENT) "Share your camera with baby (optional)"
+                              else "See your baby in live video",
+                granted = cameraGranted
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             PermissionRow(
                 icon = Icons.Outlined.Mic,
                 label = "Microphone",
@@ -146,13 +147,13 @@ fun PermissionsScreen(role: Role = Role.NONE, onContinue: () -> Unit) {
                 text = "Allow & continue",
                 onClick = {
                     val toRequest = mutableListOf<String>()
-                    if (needsCamera && !cameraGranted) toRequest.add(Manifest.permission.CAMERA)
+                    if (!cameraGranted) toRequest.add(Manifest.permission.CAMERA)
                     if (!micGranted) toRequest.add(Manifest.permission.RECORD_AUDIO)
                     if (notificationsSupported && !notificationsGranted) {
                         toRequest.add(Manifest.permission.POST_NOTIFICATIONS)
                     }
                     if (toRequest.isEmpty()) {
-                        val coreOk = (if (needsCamera) cameraGranted else true) && micGranted
+                        val coreOk = (if (cameraRequired) cameraGranted else true) && micGranted
                         if (coreOk) onContinue()
                     } else {
                         launcher.launch(toRequest.toTypedArray())

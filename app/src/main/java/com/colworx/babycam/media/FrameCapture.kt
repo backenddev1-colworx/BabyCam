@@ -13,6 +13,8 @@ import org.webrtc.YuvHelper
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -24,42 +26,57 @@ import java.util.concurrent.atomic.AtomicBoolean
  * itself. All native buffers are released; any failure yields a null bitmap rather
  * than throwing.
  *
- * IMPORTANT: the [VideoSink] callback runs on WebRTC's frame-delivery thread, which
- * is shared with the SurfaceViewRenderer that draws the live preview. Doing the JPEG
- * encode/decode synchronously there blocked that thread for 40+ seconds on a real
- * device (zero frames rendered, then an ANR + force-kill by the system) — so the
- * heavy work is dispatched to [executor] and only a cheap frame retain/release
- * happens inline.
+ * IMPORTANT: [VideoSink.onFrame] is called while WebRTC holds its internal
+ * native sink-list lock. Calling [VideoTrack.removeSink] from INSIDE [onFrame]
+ * tries to re-acquire that same lock → deadlock on the WebRTC thread, which in
+ * turn starves the main thread and causes an ANR. The sink removal is therefore
+ * done from the executor thread AFTER the callback returns. A 3-second timeout
+ * covers the case where the track stops delivering frames (e.g. camera standby).
  */
 object FrameCapture {
 
-    private val executor = Executors.newSingleThreadExecutor()
+    private val executor: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor()
 
     fun capture(track: VideoTrack, onBitmap: (Bitmap?) -> Unit) {
         val captured = AtomicBoolean(false)
+        // Held as a var so the executor timeout closure can reference it.
         var sink: VideoSink? = null
-        sink = VideoSink { frame ->
-            // Only the very first frame is used; ignore the rest.
+
+        val s = VideoSink { frame ->
+            // Only the very first frame is used; ignore the rest (AtomicBoolean
+            // ensures at-most-once even if multiple frames arrive before the sink
+            // is removed).
             if (!captured.compareAndSet(false, true)) return@VideoSink
-            // Detach immediately so the track stops feeding us frames.
-            sink?.let { track.removeSink(it) }
-            // Keep the frame alive past this callback (it's only valid for its
-            // duration otherwise), then do the heavy conversion off-thread.
+            // Keep the frame alive past this callback's scope.
             frame.retain()
             executor.execute {
                 try {
                     onBitmap(toBitmap(frame))
                 } finally {
                     frame.release()
+                    // Safe to call removeSink here — we are OFF the frame-delivery
+                    // thread so there is no re-entrant lock acquisition.
+                    sink?.let { runCatching { track.removeSink(it) } }
                 }
             }
         }
-        track.addSink(sink)
+        sink = s
+        track.addSink(s)
+
+        // Timeout: if the track delivers no frame within 3 s (e.g. camera in
+        // standby, track not yet active), clean up and report failure.
+        executor.schedule({
+            if (captured.compareAndSet(false, true)) {
+                runCatching { track.removeSink(s) }
+                onBitmap(null)
+            }
+        }, 3, TimeUnit.SECONDS)
     }
 
     /**
      * Converts a WebRTC [frame] to a [Bitmap]. The frame is owned by the caller
-     * (the sink) and must NOT be released here — only the derived I420 buffer is.
+     * and must NOT be released here — only the derived I420 buffer is.
      */
     private fun toBitmap(frame: VideoFrame): Bitmap? {
         val i420 = frame.buffer.toI420() ?: return null
@@ -67,18 +84,14 @@ object FrameCapture {
             val width = i420.width
             val height = i420.height
             val ySize = width * height
-            val uvSize = ySize / 2 // interleaved chroma plane (NV21 V/U pairs)
+            val uvSize = ySize / 2
 
-            // Build NV21 directly via YuvHelper. This build of stream-webrtc-android
-            // (1.3.8) exposes I420ToNV12 but not I420ToNV21; swapping the U and V
-            // source planes turns the NV12 (UV) output into NV21 (VU) ordering.
             val nv21 = ByteBuffer.allocateDirect(ySize + uvSize)
             val dstY = nv21.duplicate().apply { position(0); limit(ySize) }.slice()
             val dstVU = nv21.duplicate().apply { position(ySize); limit(ySize + uvSize) }.slice()
 
             YuvHelper.I420ToNV12(
                 i420.dataY, i420.strideY,
-                // Swap V <-> U so the interleaved output is V,U = NV21.
                 i420.dataV, i420.strideV,
                 i420.dataU, i420.strideU,
                 dstY, width,
@@ -98,9 +111,8 @@ object FrameCapture {
             val decoded = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return null
 
             val rotation = frame.rotation
-            if (rotation == 0) {
-                decoded
-            } else {
+            if (rotation == 0) decoded
+            else {
                 val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
                 Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
             }

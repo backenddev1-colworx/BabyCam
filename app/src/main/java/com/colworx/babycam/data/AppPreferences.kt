@@ -21,6 +21,8 @@ data class SavedBaby(
     val room: String,
     val name: String,
     val lastActiveAt: Long,
+    /** Persisted so a privacy mute survives leaving and re-entering this baby's live view. */
+    val micMuted: Boolean = false,
 )
 
 class AppPreferences(private val context: Context) {
@@ -32,6 +34,11 @@ class AppPreferences(private val context: Context) {
     private val babyRoomKey = stringPreferencesKey("baby_room")
     private val savedBabiesKey = stringPreferencesKey("saved_babies")
     private val lastVisitedViewKey = stringPreferencesKey("last_visited_view")
+    private val notificationsEnabledKey = booleanPreferencesKey("notifications_enabled")
+    private val cryDetectionEnabledKey = booleanPreferencesKey("cry_detection_enabled")
+    private val nightModeKey = booleanPreferencesKey("night_mode")
+    private val videoQualityKey = stringPreferencesKey("video_quality")
+    private val babySetupDoneKey = booleanPreferencesKey("baby_setup_done")
 
     val role: Flow<Role> = context.dataStore.data.map { prefs ->
         when (prefs[roleKey]) {
@@ -48,6 +55,35 @@ class AppPreferences(private val context: Context) {
 
     val dataSaver: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[dataSaverKey] ?: false
+    }
+
+    /** Alert notifications (cry / low-battery). OFF by default — the user opts in from Settings. */
+    val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[notificationsEnabledKey] ?: false
+    }
+
+    /** Baby cry detection. OFF by default; toggled locally on the baby or remotely by the parent. */
+    val cryDetectionEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[cryDetectionEnabledKey] ?: false
+    }
+
+    /** Parent's night-mode (green low-light filter) preference, persisted across sessions. */
+    val nightMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[nightModeKey] ?: false
+    }
+
+    /** Baby capture quality: "HIGH" (1280x720@30) or "SAVER" (640x480@15). Default HIGH. */
+    val videoQuality: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[videoQualityKey] ?: "HIGH"
+    }
+
+    /**
+     * True once the baby device has finished first-time setup (chosen role + reached the monitor).
+     * Used so an already-set-up baby reopens straight to the monitor/status screen instead of
+     * being walked through welcome/permissions/pairing again.
+     */
+    val babySetupDone: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[babySetupDoneKey] ?: false
     }
 
     /** The currently-active baby room for the parent (last one viewed), or null if none. */
@@ -81,6 +117,26 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit { it[dataSaverKey] = on }
     }
 
+    suspend fun setNotificationsEnabled(on: Boolean) {
+        context.dataStore.edit { it[notificationsEnabledKey] = on }
+    }
+
+    suspend fun setCryDetectionEnabled(on: Boolean) {
+        context.dataStore.edit { it[cryDetectionEnabledKey] = on }
+    }
+
+    suspend fun setNightMode(on: Boolean) {
+        context.dataStore.edit { it[nightModeKey] = on }
+    }
+
+    suspend fun setVideoQuality(quality: String) {
+        context.dataStore.edit { it[videoQualityKey] = quality }
+    }
+
+    suspend fun setBabySetupDone(done: Boolean) {
+        context.dataStore.edit { it[babySetupDoneKey] = done }
+    }
+
     /** Remembers [room] as the parent's currently-active baby for one-tap reconnect. */
     suspend fun setParentRoom(room: String) {
         context.dataStore.edit { it[parentRoomKey] = room }
@@ -102,9 +158,25 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit { prefs ->
             val babies = parseBabies(prefs[savedBabiesKey]).toMutableList()
             val idx = babies.indexOfFirst { it.room == room }
-            val entry = SavedBaby(room = room, name = name, lastActiveAt = activeNow)
-            if (idx >= 0) babies[idx] = entry else babies.add(entry)
+            if (idx >= 0) {
+                // Preserve micMuted (and any other future per-baby settings) for an existing entry.
+                babies[idx] = babies[idx].copy(name = name, lastActiveAt = activeNow)
+            } else {
+                babies.add(SavedBaby(room = room, name = name, lastActiveAt = activeNow))
+            }
             prefs[savedBabiesKey] = serializeBabies(babies)
+        }
+    }
+
+    /** Persists the privacy-mute toggle for [room] so it survives leaving/re-entering live view. */
+    suspend fun setBabyMicMuted(room: String, muted: Boolean) {
+        context.dataStore.edit { prefs ->
+            val babies = parseBabies(prefs[savedBabiesKey]).toMutableList()
+            val idx = babies.indexOfFirst { it.room == room }
+            if (idx >= 0) {
+                babies[idx] = babies[idx].copy(micMuted = muted)
+                prefs[savedBabiesKey] = serializeBabies(babies)
+            }
         }
     }
 
@@ -115,6 +187,18 @@ class AppPreferences(private val context: Context) {
             val idx = babies.indexOfFirst { it.room == room }
             if (idx >= 0) {
                 babies[idx] = babies[idx].copy(lastActiveAt = activeNow)
+                prefs[savedBabiesKey] = serializeBabies(babies)
+            }
+        }
+    }
+
+    /** Renames a saved baby without touching its activity timestamp. */
+    suspend fun renameBaby(room: String, newName: String) {
+        context.dataStore.edit { prefs ->
+            val babies = parseBabies(prefs[savedBabiesKey]).toMutableList()
+            val idx = babies.indexOfFirst { it.room == room }
+            if (idx >= 0) {
+                babies[idx] = babies[idx].copy(name = newName)
                 prefs[savedBabiesKey] = serializeBabies(babies)
             }
         }
@@ -153,6 +237,7 @@ class AppPreferences(private val context: Context) {
                     room = o.getString("room"),
                     name = o.getString("name"),
                     lastActiveAt = o.optLong("lastActiveAt", 0L),
+                    micMuted = o.optBoolean("micMuted", false),
                 )
             }
         } catch (_: Exception) {
@@ -169,6 +254,7 @@ class AppPreferences(private val context: Context) {
                     put("room", b.room)
                     put("name", b.name)
                     put("lastActiveAt", b.lastActiveAt)
+                    put("micMuted", b.micMuted)
                 }
             )
         }

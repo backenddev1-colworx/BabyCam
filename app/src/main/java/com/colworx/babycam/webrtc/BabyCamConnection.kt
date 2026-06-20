@@ -9,6 +9,7 @@ import android.hardware.camera2.CameraManager
 import android.os.BatteryManager
 import android.util.Log
 import com.colworx.babycam.audio.LullabyPlayer
+import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.service.CryNotifier
 import com.colworx.babycam.signaling.SignalMessage
 import com.colworx.babycam.signaling.SignalingClient
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.AudioTrack
@@ -69,6 +71,9 @@ class BabyCamConnection(
                 } else {
                     Log.e(TAG, "Baby: camera capturer unavailable — no local video track created")
                 }
+                // Reserve a recv-only video m-line (#1) so the parent can stream its camera back
+                // on demand without a later renegotiation. Must come after startCamera (#0).
+                session.addParentVideoReceiveSlot()
                 session.startAudio()
             }
             signaling.connect(
@@ -144,11 +149,18 @@ class BabyCamConnection(
                     Log.d(TAG, "Baby: fresh offer created for parent")
                     signaling.send("offer", sdp.description, retained = true)
                 }
+                // Tell the (re)connecting parent the current cry-detection state so its toggle is
+                // accurate without the parent having to change anything.
+                scope.launch { sendCryState(AppPreferences(context).cryDetectionEnabled.first()) }
             }
             "remote_cam" -> if (role == ConnRole.BABY) {
                 val on = msg.payload == "on"
-                session.setLocalVideoEnabled(on)
-                Log.d(TAG, "Baby: camera ${if (on) "ON" else "OFF"} by parent")
+                // Real power-save: stops the Camera2 capturer entirely when off (not just the
+                // track), so the phone actually stops drawing power/heating up — see
+                // WebRtcSession.setCameraStandby for why a track-only disable wasn't enough.
+                session.setCameraStandby(standby = !on)
+                LiveSession.babyCamEnabled.value = on
+                Log.d(TAG, "Baby: camera ${if (on) "ON" else "OFF (power-save)"} by parent")
             }
             "remote_mic" -> if (role == ConnRole.BABY) {
                 val on = msg.payload == "on"
@@ -166,6 +178,9 @@ class BabyCamConnection(
             "offer" -> if (role == ConnRole.PARENT) {
                 Log.d(TAG, "Parent: received offer, creating answer")
                 session.setRemoteDescription(SessionDescription(SessionDescription.Type.OFFER, msg.payload))
+                // Attach the parent's own camera to the baby's recv-only slot (kept in standby) so
+                // "Share my camera" later is a zero-renegotiation start. Idempotent across re-offers.
+                session.attachParentCamera(useFront = true)
                 session.createAnswer { sdp ->
                     Log.d(TAG, "Parent: answer created")
                     signaling.send("answer", sdp.description)
@@ -189,11 +204,37 @@ class BabyCamConnection(
                 msg.payload.toIntOrNull()?.let { onBatteryUpdate(it) }
             }
             "cry" -> if (role == ConnRole.PARENT) {
-                CryNotifier.postCryAlert(context)
+                // Only post the lock-screen alert if the parent has opted into notifications.
+                scope.launch {
+                    if (AppPreferences(context).notificationsEnabled.first()) {
+                        CryNotifier.postCryAlert(context)
+                    }
+                }
                 onCryAlert()
             }
             "torch_state" -> if (role == ConnRole.PARENT) {
                 onTorchState(msg.payload == "on")
+            }
+            "remote_cry" -> if (role == ConnRole.BABY) {
+                val on = msg.payload == "on"
+                // Persist so MonitorService starts/stops the detector; echo back so the parent UI
+                // reflects the real state.
+                scope.launch { AppPreferences(context).setCryDetectionEnabled(on) }
+                sendCryState(on)
+                Log.d(TAG, "Baby: cry detection ${if (on) "ON" else "OFF"} by parent")
+            }
+            "cry_state" -> if (role == ConnRole.PARENT) {
+                LiveSession.babyCryDetectionEnabled.value = msg.payload == "on"
+            }
+            "remote_quality" -> if (role == ConnRole.BABY) {
+                if (msg.payload == "saver") session.changeCaptureFormat(640, 480, 15)
+                else session.changeCaptureFormat(1280, 720, 30)
+                Log.d(TAG, "Baby: capture quality -> ${msg.payload}")
+            }
+            "parent_cam" -> if (role == ConnRole.BABY) {
+                // The parent started/stopped sharing its camera; drives the PiP on the baby UI.
+                LiveSession.parentCamSharing.value = msg.payload == "on"
+                Log.d(TAG, "Baby: parent camera sharing ${msg.payload}")
             }
             else -> {}
         }
@@ -325,6 +366,26 @@ class BabyCamConnection(
     fun setRemoteCamera(on: Boolean) = signaling.send("remote_cam", if (on) "on" else "off")
     fun setRemoteMic(on: Boolean) = signaling.send("remote_mic", if (on) "on" else "off")
     fun setTorch(on: Boolean) = signaling.send("torch", if (on) "on" else "off")
+
+    /** Parent: turn the baby's cry detection on/off remotely. */
+    fun setRemoteCryDetection(on: Boolean) = signaling.send("remote_cry", if (on) "on" else "off")
+
+    /** Parent: set the baby's capture quality (true = battery-saver low-res). */
+    fun setRemoteQuality(saver: Boolean) = signaling.send("remote_quality", if (saver) "saver" else "high")
+
+    /** Baby: report its current cry-detection state to the parent (keeps the parent toggle synced). */
+    fun sendCryState(on: Boolean) = signaling.send("cry_state", if (on) "on" else "off")
+
+    /**
+     * Parent: start/stop streaming the parent's own camera back to the baby (on-demand two-way).
+     * The track was pre-attached in standby by [attachParentCamera], so this just starts/stops the
+     * capturer — no renegotiation — and tells the baby whether to show the picture-in-picture.
+     */
+    fun setParentCameraSharing(on: Boolean) {
+        if (role != ConnRole.PARENT) return
+        session.setCameraStandby(standby = !on)
+        signaling.send("parent_cam", if (on) "on" else "off")
+    }
 
     private fun parseIce(payload: String): IceCandidate? = try {
         val o = JSONObject(payload)

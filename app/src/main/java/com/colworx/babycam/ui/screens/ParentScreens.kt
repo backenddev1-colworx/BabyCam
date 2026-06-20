@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Videocam
@@ -70,7 +73,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +88,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
 import android.widget.Toast
 import com.colworx.babycam.data.AppPreferences
+import com.colworx.babycam.data.Role
 import com.colworx.babycam.media.nightModeFilter
 import com.colworx.babycam.security.PinManager
 import com.colworx.babycam.service.MonitorController
@@ -101,6 +107,8 @@ import com.colworx.babycam.ui.theme.Muted
 import com.colworx.babycam.ui.theme.NightBg
 import com.colworx.babycam.ui.theme.NightSurface
 import com.colworx.babycam.ui.theme.NightText
+import com.colworx.babycam.ui.theme.Teal
+import com.colworx.babycam.ui.theme.TealBg
 import com.colworx.babycam.webrtc.LiveSession
 import com.colworx.babycam.webrtc.VideoRenderer
 import kotlinx.coroutines.delay
@@ -192,16 +200,23 @@ fun ParentScanScreen(onScanned: (String) -> Unit = {}) {
     }
 }
 
+/** Coarse connection-quality tiers shown to the parent (no per-packet stats — see note below). */
+private enum class SignalQuality { STRONG, RECONNECTING, OFFLINE }
+
 // 2) Parent live screen ------------------------------------------------------
 
 @Composable
 fun ParentLiveScreen(
     onSettings: () -> Unit = {},
-    onDisconnect: () -> Unit = {}
+    onDisconnect: () -> Unit = {},
+    onOpenSnapshots: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val prefs = remember { AppPreferences(context) }
+    val scope = rememberCoroutineScope()
     val track by LiveSession.remoteVideo
     val connState by LiveSession.connState
+    val signalingUp by LiveSession.signalingUp
     val connection = LiveSession.connection
     val battery by LiveSession.babyBattery
     val babyCamOn by LiveSession.babyCamEnabled
@@ -212,6 +227,28 @@ fun ParentLiveScreen(
     var nightMode by remember { mutableStateOf(false) }
     var bellRinging by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    val parentSharing by LiveSession.parentSharingCamera
+
+    // Persisted night-mode + capture quality so they survive leaving/reopening the live view.
+    // Quality is (re)sent to the baby whenever signaling comes up, so it sticks across reconnects.
+    val savedNight by prefs.nightMode.collectAsState(initial = false)
+    LaunchedEffect(savedNight) { nightMode = savedNight }
+    val savedQuality by prefs.videoQuality.collectAsState(initial = "HIGH")
+    LaunchedEffect(signalingUp, savedQuality) {
+        if (signalingUp) LiveSession.setRemoteQuality(savedQuality == "SAVER")
+    }
+
+    // Pinch-to-zoom on the live feed: scale 1x-4x, drag-to-pan while zoomed in, double-tap to
+    // reset. Resets automatically when the video track changes (e.g. reconnect) so a fresh
+    // stream always starts un-zoomed.
+    var zoomScale by remember { mutableStateOf(1f) }
+    var zoomOffsetX by remember { mutableStateOf(0f) }
+    var zoomOffsetY by remember { mutableStateOf(0f) }
+    LaunchedEffect(track) {
+        zoomScale = 1f
+        zoomOffsetX = 0f
+        zoomOffsetY = 0f
+    }
 
     // Elapsed time since screen opened
     var elapsedSeconds by remember { mutableStateOf(0) }
@@ -222,9 +259,30 @@ fun ParentLiveScreen(
         }
     }
 
-    val isDisconnected = connState == org.webrtc.PeerConnection.IceConnectionState.FAILED ||
-        connState == org.webrtc.PeerConnection.IceConnectionState.DISCONNECTED ||
-        connState == org.webrtc.PeerConnection.IceConnectionState.CLOSED
+    // Connection-quality pill. This is derived only from ICE state + signaling reachability, not
+    // from per-packet stats (bitrate/loss) — wiring up WebRTC getStats() for a true "Weak" tier
+    // is a reasonable follow-up but adds real complexity/risk for a first cut.
+    val quality = when {
+        !signalingUp -> SignalQuality.RECONNECTING
+        connState == org.webrtc.PeerConnection.IceConnectionState.CONNECTED ||
+            connState == org.webrtc.PeerConnection.IceConnectionState.COMPLETED -> SignalQuality.STRONG
+        connState == org.webrtc.PeerConnection.IceConnectionState.FAILED ||
+            connState == org.webrtc.PeerConnection.IceConnectionState.CLOSED -> SignalQuality.OFFLINE
+        else -> SignalQuality.RECONNECTING // NEW / CHECKING / DISCONNECTED / null (still connecting)
+    }
+
+    // Debounce the full-screen "Connection lost" overlay so a brief blip (a few seconds of ICE
+    // re-checking) just shows the small Reconnecting pill instead of jarringly blacking out the
+    // whole screen — only truly prolonged offline state takes over the view.
+    var showLostOverlay by remember { mutableStateOf(false) }
+    LaunchedEffect(quality) {
+        if (quality == SignalQuality.OFFLINE) {
+            delay(4000L)
+            showLostOverlay = true
+        } else {
+            showLostOverlay = false
+        }
+    }
 
     // Intercept back button — require explicit disconnect
     BackHandler { showDisconnectDialog = true }
@@ -263,6 +321,32 @@ fun ParentLiveScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .nightModeFilter(nightMode)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val newScale = (zoomScale * zoom).coerceIn(1f, 4f)
+                            zoomScale = newScale
+                            if (newScale <= 1f) {
+                                zoomOffsetX = 0f
+                                zoomOffsetY = 0f
+                            } else {
+                                zoomOffsetX += pan.x
+                                zoomOffsetY += pan.y
+                            }
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(onDoubleTap = {
+                            zoomScale = 1f
+                            zoomOffsetX = 0f
+                            zoomOffsetY = 0f
+                        })
+                    }
+                    .graphicsLayer(
+                        scaleX = zoomScale,
+                        scaleY = zoomScale,
+                        translationX = zoomOffsetX,
+                        translationY = zoomOffsetY,
+                    )
             )
         } else {
             Box(
@@ -280,8 +364,8 @@ fun ParentLiveScreen(
             }
         }
 
-        // Connection-lost overlay
-        if (isDisconnected) {
+        // Connection-lost overlay (debounced — see showLostOverlay)
+        if (showLostOverlay) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -325,6 +409,23 @@ fun ParentLiveScreen(
                 text = "LIVE",
                 bg = Color(0x2EE24B4A),
                 fg = Color(0xFFFF8B8A)
+            )
+            StatusPill(
+                text = when (quality) {
+                    SignalQuality.STRONG -> "Strong"
+                    SignalQuality.RECONNECTING -> "Reconnecting…"
+                    SignalQuality.OFFLINE -> "Offline"
+                },
+                bg = when (quality) {
+                    SignalQuality.STRONG -> TealBg
+                    SignalQuality.RECONNECTING -> Color(0x33FFA726)
+                    SignalQuality.OFFLINE -> Color(0x33FF6B6B)
+                },
+                fg = when (quality) {
+                    SignalQuality.STRONG -> Teal
+                    SignalQuality.RECONNECTING -> Color(0xFFFFA726)
+                    SignalQuality.OFFLINE -> Color(0xFFFF6B6B)
+                }
             )
             Icon(
                 imageVector = Icons.Outlined.BatteryStd,
@@ -397,7 +498,14 @@ fun ParentLiveScreen(
                 RoundControl(
                     icon = if (babyMicOn) Icons.Outlined.Mic else Icons.Outlined.MicOff,
                     label = if (babyMicOn) "Mic ON" else "Mic OFF",
-                    onClick = { LiveSession.setRemoteMic(!babyMicOn) },
+                    onClick = {
+                        val newOn = !babyMicOn
+                        LiveSession.setRemoteMic(newOn)
+                        val room = LiveSession.room
+                        if (room.isNotEmpty()) {
+                            scope.launch { prefs.setBabyMicMuted(room, muted = !newOn) }
+                        }
+                    },
                     bg = if (babyMicOn) Color(0x33FFFFFF) else Color(0x44FF4444),
                     fg = if (babyMicOn) Color.White else Color(0xFFFF8080)
                 )
@@ -447,7 +555,11 @@ fun ParentLiveScreen(
                 RoundControl(
                     icon = Icons.Outlined.DarkMode,
                     label = if (nightMode) "Night ON" else "Night",
-                    onClick = { nightMode = !nightMode },
+                    onClick = {
+                        val v = !nightMode
+                        nightMode = v
+                        scope.launch { prefs.setNightMode(v) }
+                    },
                     bg = if (nightMode) Color(0xFF1D3320) else Color(0x33FFFFFF),
                     fg = if (nightMode) Color(0xFF4CAF50) else NightText
                 )
@@ -476,6 +588,18 @@ fun ParentLiveScreen(
                             }
                         }
                     }
+                )
+                RoundControl(
+                    icon = Icons.Outlined.PhotoLibrary,
+                    label = "Gallery",
+                    onClick = onOpenSnapshots,
+                )
+                RoundControl(
+                    icon = if (parentSharing) Icons.Outlined.Videocam else Icons.Outlined.VideocamOff,
+                    label = if (parentSharing) "Sharing" else "Share Cam",
+                    onClick = { LiveSession.setParentCameraSharing(!parentSharing) },
+                    bg = if (parentSharing) IndigoDeep else Color(0x33FFFFFF),
+                    fg = Color.White
                 )
             }
 
@@ -508,6 +632,13 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
     val savedRoom by prefs.parentRoom.collectAsState(initial = null)
     LaunchedEffect(savedSens) { crySensitivity = savedSens }
     LaunchedEffect(savedDataSaver) { dataSaver = savedDataSaver }
+
+    // Settings is shared by both roles; show the controls relevant to each.
+    val role by prefs.role.collectAsState(initial = Role.NONE)
+    val notifEnabled by prefs.notificationsEnabled.collectAsState(initial = false)
+    val cryEnabledBaby by prefs.cryDetectionEnabled.collectAsState(initial = false)
+    val cryEnabledRemote by LiveSession.babyCryDetectionEnabled
+    val savedQuality by prefs.videoQuality.collectAsState(initial = "HIGH")
 
     if (showAboutDialog) {
         AlertDialog(
@@ -600,23 +731,60 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
         )
         Spacer(Modifier.height(16.dp))
 
+        // Alerts & cry detection — both default OFF, opt-in here.
         AppCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Cry sensitivity",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Indigo900
-                )
-                Slider(
-                    value = crySensitivity,
-                    onValueChange = { v ->
-                        crySensitivity = v
-                        scope.launch { prefs.setCrySensitivity(v) }
+                SwitchRow("Notifications (cry & low-battery)", notifEnabled) { v ->
+                    scope.launch { prefs.setNotificationsEnabled(v) }
+                }
+                Spacer(Modifier.height(8.dp))
+                if (role == Role.PARENT) {
+                    SwitchRow("Baby cry detection (remote)", cryEnabledRemote) { v ->
+                        LiveSession.setRemoteCryDetection(v)
                     }
-                )
+                } else {
+                    SwitchRow("Cry detection", cryEnabledBaby) { v ->
+                        scope.launch { prefs.setCryDetectionEnabled(v) }
+                        LiveSession.notifyCryStateChanged(v)
+                    }
+                }
             }
         }
         Spacer(Modifier.height(12.dp))
+
+        // Battery-saver video lever (parent-controlled; reduces the baby's encode/ISP load).
+        if (role == Role.PARENT) {
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SwitchRow("Battery-saver video (low-res)", savedQuality == "SAVER") { v ->
+                        scope.launch { prefs.setVideoQuality(if (v) "SAVER" else "HIGH") }
+                        LiveSession.setRemoteQuality(v)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        // Cry sensitivity only matters where detection actually runs — the baby device.
+        if (role != Role.PARENT) {
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Cry sensitivity",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Indigo900
+                    )
+                    Slider(
+                        value = crySensitivity,
+                        onValueChange = { v ->
+                            crySensitivity = v
+                            scope.launch { prefs.setCrySensitivity(v) }
+                        }
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         AppCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -627,10 +795,10 @@ fun SettingsScreen(onBack: () -> Unit = {}, onForgetPairing: (() -> Unit)? = nul
                 Spacer(Modifier.height(8.dp))
                 SwitchRow("Data-saver (audio only)", dataSaver) { v ->
                     dataSaver = v
-                    scope.launch {
-                        prefs.setDataSaver(v)
-                        LiveSession.setVideoEnabled(!v)
-                    }
+                    scope.launch { prefs.setDataSaver(v) }
+                    // Real power-save: actually stop the baby's camera capturer (not just disable
+                    // the track), so audio-only mode genuinely saves the baby's battery/heat.
+                    LiveSession.setRemoteCamera(!v)
                 }
                 Spacer(Modifier.height(8.dp))
                 SwitchRow("App lock (PIN/biometric)", lockEnabled) { v ->

@@ -41,6 +41,10 @@ object CryNotifier {
             .setContentText("Tap to open the live view")
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            // Show full content on the lock screen — this alert needs to be seen immediately,
+            // not redacted behind "new notification" on devices with that privacy setting.
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
             .build()

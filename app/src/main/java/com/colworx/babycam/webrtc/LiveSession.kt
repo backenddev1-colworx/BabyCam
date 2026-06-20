@@ -36,12 +36,25 @@ object LiveSession {
     val babyMicEnabled = mutableStateOf(true)
     val babyTorchOn = mutableStateOf(false)
 
+    /** Parent-observed: whether the baby's cry detection is currently ON (synced via "cry_state"). */
+    val babyCryDetectionEnabled = mutableStateOf(false)
+
+    /** Parent-observed: whether the baby's capture is in battery-saver (low-res) mode. */
+    val babyVideoSaver = mutableStateOf(false)
+
+    /** Parent's own state: whether the parent is currently sharing its camera back to the baby. */
+    val parentSharingCamera = mutableStateOf(false)
+
+    /** Baby-observed: whether the parent is sharing its camera (drives the PiP on the baby screen). */
+    val parentCamSharing = mutableStateOf(false)
+
     fun startBaby(context: Context, room: String) {
         stop()
         this.room = room
         connection = BabyCamConnection(
             context.applicationContext, ConnRole.BABY, room,
-            onRemoteVideo = {},
+            // Baby receives the parent's camera (on-demand two-way) on this track.
+            onRemoteVideo = { remoteVideo.value = it },
             onLocalVideo = { localVideo.value = it },
             onState = { connState.value = it },
             onSignalingUp = { signalingUp.value = it },
@@ -50,18 +63,34 @@ object LiveSession {
         ).also { it.start() }
     }
 
-    fun startParent(context: Context, room: String) {
+    /**
+     * @param initialMicOn restores a previously-saved privacy-mute for this baby (see
+     *        [com.colworx.babycam.data.SavedBaby.micMuted]). The baby defaults its mic to ON when
+     *        it (re)connects, so if the parent had muted it we must explicitly re-send "off"
+     *        once signaling comes up — otherwise a reconnect would silently un-mute.
+     */
+    fun startParent(context: Context, room: String, initialMicOn: Boolean = true) {
         stop()
         this.room = room
-        connection = BabyCamConnection(
+        babyMicEnabled.value = initialMicOn
+        var sentInitialMicState = false
+        val conn = BabyCamConnection(
             context.applicationContext, ConnRole.PARENT, room,
             onRemoteVideo = { remoteVideo.value = it },
             onState = { connState.value = it },
-            onSignalingUp = { signalingUp.value = it },
+            onSignalingUp = { up ->
+                signalingUp.value = up
+                if (up && !initialMicOn && !sentInitialMicState) {
+                    sentInitialMicState = true
+                    connection?.setRemoteMic(false)
+                }
+            },
             onBatteryUpdate = { babyBattery.value = it },
             onCryAlert = { cryPing.value = cryPing.value + 1 },
             onTorchState = { babyTorchOn.value = it },
-        ).also { it.start() }
+        )
+        connection = conn
+        conn.start()
     }
 
     fun setTalking(on: Boolean) = connection?.setTalking(on) ?: Unit
@@ -70,6 +99,12 @@ object LiveSession {
     fun switchCamera() = connection?.requestRemoteCameraSwitch() ?: Unit
     fun sendLullaby(sound: String) = connection?.sendLullaby(sound) ?: Unit
 
+    /**
+     * Parent: turn the baby's camera fully on/off. Off is a real power-save standby — the baby's
+     * Camera2 capturer is stopped, not just the outgoing track muted — so the baby phone actually
+     * stops drawing power/heating up while off (see WebRtcSession.setCameraStandby). The mic is
+     * independent of this, so audio-only listening with the camera off is just: cam off + mic on.
+     */
     fun setRemoteCamera(on: Boolean) {
         babyCamEnabled.value = on
         connection?.setRemoteCamera(on)
@@ -88,6 +123,29 @@ object LiveSession {
     fun setVideoEnabled(enabled: Boolean) {
         babyCamEnabled.value = enabled
         connection?.setVideoEnabled(enabled)
+    }
+
+    /** Parent: turn the baby's cry detection on/off remotely (baby confirms via "cry_state"). */
+    fun setRemoteCryDetection(on: Boolean) {
+        babyCryDetectionEnabled.value = on // optimistic; corrected by the baby's echo
+        connection?.setRemoteCryDetection(on)
+    }
+
+    /** Parent: switch the baby's capture between battery-saver (low-res) and high quality. */
+    fun setRemoteQuality(saver: Boolean) {
+        babyVideoSaver.value = saver
+        connection?.setRemoteQuality(saver)
+    }
+
+    /** Parent: start/stop sharing the parent's own camera back to the baby (on-demand two-way). */
+    fun setParentCameraSharing(on: Boolean) {
+        parentSharingCamera.value = on
+        connection?.setParentCameraSharing(on)
+    }
+
+    /** Baby: notify the parent that cry detection was toggled locally (keeps the parent UI synced). */
+    fun notifyCryStateChanged(on: Boolean) {
+        connection?.sendCryState(on)
     }
 
     /** Baby: publish a cry alert to the paired parent. */
@@ -125,5 +183,9 @@ object LiveSession {
         babyCamEnabled.value = true
         babyMicEnabled.value = true
         babyTorchOn.value = false
+        babyCryDetectionEnabled.value = false
+        babyVideoSaver.value = false
+        parentSharingCamera.value = false
+        parentCamSharing.value = false
     }
 }

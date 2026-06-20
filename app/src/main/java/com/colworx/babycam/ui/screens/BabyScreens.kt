@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.Hearing
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.VideocamOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -168,7 +169,8 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
         ) {
             val connection = LiveSession.connection
             val localTrack by LiveSession.localVideo
-            if (connection != null) {
+            val camOn by LiveSession.babyCamEnabled
+            if (connection != null && camOn) {
                 VideoRenderer(
                     track = localTrack,
                     eglContext = connection.eglContext,
@@ -176,23 +178,106 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
                     mirror = false
                 )
             }
+            if (!camOn) {
+                // The parent turned the camera off to save battery/heat (capturer is actually
+                // stopped, not just hidden — see WebRtcSession.setCameraStandby).
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.VideocamOff,
+                        contentDescription = null,
+                        tint = Muted,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Power-save — camera off",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NightText
+                    )
+                }
+            }
             Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.FiberManualRecord,
-                    contentDescription = null,
-                    tint = AlertRed,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(modifier = Modifier.size(4.dp))
-                Text(
-                    text = "LIVE",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NightText
+                if (camOn) {
+                    Icon(
+                        imageVector = Icons.Outlined.FiberManualRecord,
+                        contentDescription = null,
+                        tint = AlertRed,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.size(4.dp))
+                    Text(
+                        text = "LIVE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NightText
+                    )
+                }
+            }
+
+            // Picture-in-picture of the parent's camera — only while the parent is actively
+            // sharing it (on-demand two-way video). Hidden otherwise so there's no black box.
+            val parentSharing by LiveSession.parentCamSharing
+            val parentTrack by LiveSession.remoteVideo
+            if (parentSharing && parentTrack != null && connection != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .size(width = 92.dp, height = 124.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black)
+                ) {
+                    VideoRenderer(
+                        track = parentTrack,
+                        eglContext = connection.eglContext,
+                        modifier = Modifier.fillMaxSize(),
+                        mirror = false
+                    )
+                    Text(
+                        text = "Parent",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(2.dp)
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Paired status — the pairing code (so a new parent can still pair) + whether a parent is
+        // currently connected. This replaces re-showing the setup screen for an already-paired baby.
+        val connStateBaby by LiveSession.connState
+        val parentConnected = connStateBaby == org.webrtc.PeerConnection.IceConnectionState.CONNECTED ||
+            connStateBaby == org.webrtc.PeerConnection.IceConnectionState.COMPLETED
+        AppCard(modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Pairing code",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Muted
+                    )
+                    Text(
+                        text = LiveSession.room.ifEmpty { "----" },
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Indigo900,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                StatusPill(
+                    text = if (parentConnected) "Parent connected" else "Waiting for parent…",
+                    bg = if (parentConnected) TealBg else Color(0xFFFAEEDA),
+                    fg = if (parentConnected) Teal else Color(0xFF854F0B)
                 )
             }
         }

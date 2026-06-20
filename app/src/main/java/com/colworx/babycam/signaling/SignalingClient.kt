@@ -246,7 +246,10 @@ class SignalingClient(
     fun close() {
         closed = true
         try {
-            client?.disconnect()
+            // disconnect(0) = immediate, don't wait for in-flight messages.
+            // The default disconnect() uses a 30-second quiesce timeout, which blocks
+            // the calling thread (often the main thread) and causes an ANR.
+            client?.disconnect(0)
             client?.close()
         } catch (e: Exception) {
             // Ignore.

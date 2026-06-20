@@ -16,6 +16,7 @@ import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.data.Role
 import com.colworx.babycam.security.PinManager
 import com.colworx.babycam.service.MonitorController
+import com.colworx.babycam.service.ParentMonitorController
 import com.colworx.babycam.ui.screens.AppLockScreen
 import com.colworx.babycam.ui.screens.BabyActiveScreen
 import com.colworx.babycam.ui.screens.BabyPairingScreen
@@ -26,6 +27,7 @@ import com.colworx.babycam.ui.screens.ParentLiveScreen
 import com.colworx.babycam.ui.screens.ParentScanScreen
 import com.colworx.babycam.ui.screens.PermissionsScreen
 import com.colworx.babycam.ui.screens.SettingsScreen
+import com.colworx.babycam.ui.screens.SnapshotGalleryScreen
 import com.colworx.babycam.ui.screens.WelcomeScreen
 import com.colworx.babycam.webrtc.LiveSession
 import kotlinx.coroutines.flow.first
@@ -42,6 +44,7 @@ object Routes {
     const val PARENT_BABIES = "parent_babies"
     const val PARENT_LIVE = "parent_live"
     const val SETTINGS = "settings"
+    const val SNAPSHOTS = "snapshots"
 }
 
 @Composable
@@ -65,7 +68,9 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
             val savedRoom = prefs.parentRoom.first()
             if (savedRoom != null) {
                 prefs.setLastVisitedView(Routes.PARENT_LIVE)
-                LiveSession.startParent(context, savedRoom)
+                val micMuted = prefs.savedBabies.first().firstOrNull { it.room == savedRoom }?.micMuted ?: false
+                LiveSession.startParent(context, savedRoom, initialMicOn = !micMuted)
+                ParentMonitorController.start(context)
                 nav.navigate(Routes.PARENT_LIVE)
             }
             return@LaunchedEffect
@@ -74,8 +79,12 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
             prefs.migrateLegacyParentRoomIfNeeded()
             val role = prefs.role.first()
             val lastView = prefs.lastVisitedView.first()
+            val babySetupDone = prefs.babySetupDone.first()
             when {
-                role == Role.BABY && lastView == Routes.BABY_ACTIVE -> {
+                // An already-set-up baby reopens straight to its monitor/status screen — no
+                // welcome / permissions / pairing walkthrough again (it shows the code + parent
+                // status there). Also covers a hard-kill resume (lastView == BABY_ACTIVE).
+                role == Role.BABY && (babySetupDone || lastView == Routes.BABY_ACTIVE) -> {
                     val room = prefs.babyRoomOnce()
                     LiveSession.startBaby(context, room)
                     MonitorController.start(context)
@@ -84,7 +93,9 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                 role == Role.PARENT && lastView == Routes.PARENT_LIVE -> {
                     val room = prefs.parentRoom.first()
                     if (room != null) {
-                        LiveSession.startParent(context, room)
+                        val micMuted = prefs.savedBabies.first().firstOrNull { it.room == room }?.micMuted ?: false
+                        LiveSession.startParent(context, room, initialMicOn = !micMuted)
+                        ParentMonitorController.start(context)
                         nav.navigate(Routes.PARENT_LIVE) { popUpTo(Routes.WELCOME) { inclusive = false } }
                     } else {
                         prefs.setLastVisitedView(null)
@@ -149,7 +160,12 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                 BabyPairingScreen(
                     room = loadedRoom,
                     onContinue = {
-                        scope.launch { prefs.setLastVisitedView(Routes.BABY_ACTIVE) }
+                        scope.launch {
+                            prefs.setLastVisitedView(Routes.BABY_ACTIVE)
+                            // Mark first-time setup complete so future launches skip straight to
+                            // the monitor screen instead of re-running the setup walkthrough.
+                            prefs.setBabySetupDone(true)
+                        }
                         MonitorController.start(context)
                         nav.navigate(Routes.BABY_ACTIVE)
                     },
@@ -176,6 +192,7 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                     prefs.setLastVisitedView(Routes.PARENT_LIVE)
                 }
                 LiveSession.startParent(context, token)
+                ParentMonitorController.start(context)
                 nav.navigate(Routes.PARENT_LIVE) {
                     popUpTo(Routes.PARENT_SCAN) { inclusive = true }
                 }
@@ -191,25 +208,34 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                         prefs.touchBaby(baby.room, System.currentTimeMillis())
                         prefs.setLastVisitedView(Routes.PARENT_LIVE)
                     }
-                    LiveSession.startParent(context, baby.room)
+                    LiveSession.startParent(context, baby.room, initialMicOn = !baby.micMuted)
+                    ParentMonitorController.start(context)
                     nav.navigate(Routes.PARENT_LIVE)
                 },
                 onAddBaby = { nav.navigate(Routes.PARENT_SCAN) },
                 onSettings = { nav.navigate(Routes.SETTINGS) },
+                onRenameBaby = { room, newName ->
+                    scope.launch { prefs.renameBaby(room, newName) }
+                },
             )
         }
 
         composable(Routes.PARENT_LIVE) {
             ParentLiveScreen(
                 onSettings = { nav.navigate(Routes.SETTINGS) },
+                onOpenSnapshots = { nav.navigate(Routes.SNAPSHOTS) },
                 onDisconnect = {
                     scope.launch { prefs.setLastVisitedView(null) }
                     LiveSession.stop()
+                    ParentMonitorController.stop(context)
                     nav.navigate(Routes.PARENT_BABIES) {
                         popUpTo(Routes.PARENT_LIVE) { inclusive = true }
                     }
                 }
             )
+        }
+        composable(Routes.SNAPSHOTS) {
+            SnapshotGalleryScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
@@ -222,6 +248,7 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
                         prefs.setLastVisitedView(null)
                     }
                     LiveSession.stop()
+                    ParentMonitorController.stop(context)
                     nav.navigate(Routes.PARENT_BABIES) {
                         popUpTo(Routes.WELCOME) { inclusive = false }
                     }

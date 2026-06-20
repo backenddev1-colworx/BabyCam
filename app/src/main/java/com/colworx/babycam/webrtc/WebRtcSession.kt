@@ -12,8 +12,10 @@ import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
+import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
@@ -53,6 +55,12 @@ class WebRtcSession(
         private set
     var localAudioTrack: AudioTrack? = null
         private set
+
+    // Current capture format. Stored so a standby resume and a quality change both apply the
+    // same (latest) resolution/fps instead of hard-coding 1280x720x30 in two places.
+    private var capWidth = 1280
+    private var capHeight = 720
+    private var capFps = 30
 
     /**
      * Google STUN + Metered TURN relay. STUN handles most NATs (direct/reflexive); TURN relays
@@ -133,11 +141,89 @@ class WebRtcSession(
         videoSource = source
         surfaceHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
         capturer.initialize(surfaceHelper, appContext, source.capturerObserver)
-        capturer.startCapture(1280, 720, 30)
+        capturer.startCapture(capWidth, capHeight, capFps)
         val track = factory.createVideoTrack("VIDEO", source)
         track.setEnabled(true)
         localVideoTrack = track
         peerConnection?.addTrack(track, listOf("STREAM"))
+    }
+
+    /**
+     * Baby side: add a recv-only video transceiver so the OFFER carries a second video m-line the
+     * parent can later send its own camera on (on-demand two-way video). Adding it up front means
+     * the parent's "Share my camera" never triggers a renegotiation — it just starts a capturer on
+     * an already-negotiated m-line. Must be called AFTER [startCamera] so the baby's own camera is
+     * video m-line #0 and this receive slot is video m-line #1 (the parent relies on that order).
+     */
+    fun addParentVideoReceiveSlot() {
+        try {
+            peerConnection?.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+            )
+        } catch (e: Exception) {
+            // If this fails the core baby->parent stream is unaffected; two-way video just won't
+            // be available. Never let it break the primary monitor function.
+            Log.w(TAG, "addParentVideoReceiveSlot failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Parent side: attach the parent's (front) camera to the baby's recv-only video slot so the
+     * parent can stream video back on demand. Reuses [videoCapturer]/[videoSource]/[localVideoTrack]
+     * (unused on the parent otherwise) so [setCameraStandby] then controls the parent's own camera.
+     * The capturer starts in STANDBY (stopped, track disabled) — no frames flow until the parent
+     * actually taps "Share my camera". Must be called AFTER [setRemoteDescription] of the baby's
+     * offer, so the matching transceiver (video m-line #1) already exists.
+     */
+    fun attachParentCamera(useFront: Boolean = true) {
+        val pc = peerConnection ?: return
+        // Idempotent: the parent receives multiple offers (initial, re-offer on ping, ICE restart).
+        // Only attach the camera once — a second attach would leak a capturer and duplicate tracks.
+        if (localVideoTrack != null) return
+        try {
+            // The 2nd video transceiver corresponds to the baby's recv-only slot (deterministic by
+            // m-line order — the 1st video transceiver is the baby's camera we receive).
+            val slot = pc.transceivers
+                .filter { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
+                .getOrNull(1) ?: run {
+                    Log.w(TAG, "attachParentCamera: no parent video slot found")
+                    return
+                }
+            val capturer = createCameraCapturer(useFront) ?: return
+            videoCapturer = capturer
+            val source = factory.createVideoSource(capturer.isScreencast)
+            videoSource = source
+            surfaceHelper = SurfaceTextureHelper.create("ParentCapture", eglBase.eglBaseContext)
+            capturer.initialize(surfaceHelper, appContext, source.capturerObserver)
+            val track = factory.createVideoTrack("PARENT_VIDEO", source)
+            track.setEnabled(false)
+            localVideoTrack = track
+            slot.sender.setTrack(track, false)
+            slot.direction = RtpTransceiver.RtpTransceiverDirection.SEND_ONLY
+            // Start in standby: capturer NOT started yet, so zero battery/bandwidth until shared.
+            cameraStandby = true
+        } catch (e: Exception) {
+            Log.w(TAG, "attachParentCamera failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Changes the live capture resolution/fps (battery-saver lever). Safe to call while streaming —
+     * no renegotiation. If the camera is currently in standby the new format is just stored and
+     * applied on the next resume.
+     */
+    fun changeCaptureFormat(width: Int, height: Int, fps: Int) {
+        capWidth = width
+        capHeight = height
+        capFps = fps
+        if (!cameraStandby) {
+            try {
+                videoCapturer?.changeCaptureFormat(width, height, fps)
+            } catch (e: Exception) {
+                Log.w(TAG, "changeCaptureFormat failed: ${e.message}")
+            }
+        }
     }
 
     /** Add a local microphone audio track (baby always; parent only while talking). */
@@ -152,6 +238,31 @@ class WebRtcSession(
     fun setLocalAudioEnabled(enabled: Boolean) { localAudioTrack?.setEnabled(enabled) }
     fun setLocalVideoEnabled(enabled: Boolean) { localVideoTrack?.setEnabled(enabled) }
     fun switchCamera() { videoCapturer?.switchCamera(null) }
+
+    private var cameraStandby = false
+    val isCameraInStandby: Boolean get() = cameraStandby
+
+    /**
+     * Real power-save for the baby's camera, used when the parent turns the baby's camera off.
+     * Just disabling the video track (the old behavior) silences outgoing video but leaves the
+     * Camera2 capturer running — the ISP keeps producing frames, the encoder keeps being fed, and
+     * the phone keeps drawing power and heating up exactly as if it were still streaming. Calling
+     * [CameraVideoCapturer.stopCapture] actually halts the camera pipeline, which is where the
+     * real battery/heat cost is. [startCapture] resumes it when the parent turns the camera back
+     * on. The track itself is left in place (no renegotiation needed) — only enabled/disabled.
+     */
+    fun setCameraStandby(standby: Boolean) {
+        if (standby == cameraStandby) return
+        cameraStandby = standby
+        val capturer = videoCapturer ?: return
+        if (standby) {
+            try { capturer.stopCapture() } catch (e: Exception) { Log.w(TAG, "stopCapture failed: ${e.message}") }
+            localVideoTrack?.setEnabled(false)
+        } else {
+            try { capturer.startCapture(capWidth, capHeight, capFps) } catch (e: Exception) { Log.w(TAG, "startCapture failed: ${e.message}") }
+            localVideoTrack?.setEnabled(true)
+        }
+    }
 
     /**
      * Without this, Android routes WebRTC call audio through the earpiece at a much lower

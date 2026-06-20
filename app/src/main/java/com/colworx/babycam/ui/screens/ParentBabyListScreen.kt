@@ -21,15 +21,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.ChildCare
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,7 +57,8 @@ private enum class Presence { CHECKING, ONLINE, OFFLINE }
 /**
  * Parent's hub when more than one baby is paired: a list of all saved babies with a live
  * online/offline status (checked via a short MQTT ping, not a held connection — see
- * [PresenceChecker]) and the time each was last viewed. Tapping a card connects to that baby.
+ * [PresenceChecker]) and the time each was last viewed. Tapping a card connects to that baby;
+ * the pencil icon lets the parent rename a baby (e.g. "Baby 1" -> "Ayesha").
  */
 @Composable
 fun ParentBabyListScreen(
@@ -60,8 +66,11 @@ fun ParentBabyListScreen(
     onSelectBaby: (SavedBaby) -> Unit,
     onAddBaby: () -> Unit,
     onSettings: () -> Unit,
+    onRenameBaby: (room: String, newName: String) -> Unit = { _, _ -> },
 ) {
     val presence = remember { mutableStateMapOf<String, Presence>() }
+    var renaming by remember { mutableStateOf<SavedBaby?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
 
     LaunchedEffect(babies) {
         babies.forEach { baby ->
@@ -70,6 +79,33 @@ fun ParentBabyListScreen(
                 presence[baby.room] = if (online) Presence.ONLINE else Presence.OFFLINE
             }
         }
+    }
+
+    renaming?.let { baby ->
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Rename baby") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    label = { Text("Name") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameDraft.isNotBlank(),
+                    onClick = {
+                        onRenameBaby(baby.room, renameDraft.trim())
+                        renaming = null
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renaming = null }) { Text("Cancel") }
+            }
+        )
     }
 
     Column(
@@ -113,6 +149,10 @@ fun ParentBabyListScreen(
                         baby = baby,
                         presence = presence[baby.room] ?: Presence.CHECKING,
                         onClick = { onSelectBaby(baby) },
+                        onRenameClick = {
+                            renameDraft = baby.name
+                            renaming = baby
+                        },
                     )
                 }
             }
@@ -121,7 +161,12 @@ fun ParentBabyListScreen(
 }
 
 @Composable
-private fun BabyCard(baby: SavedBaby, presence: Presence, onClick: () -> Unit) {
+private fun BabyCard(
+    baby: SavedBaby,
+    presence: Presence,
+    onClick: () -> Unit,
+    onRenameClick: () -> Unit,
+) {
     AppCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -142,7 +187,11 @@ private fun BabyCard(baby: SavedBaby, presence: Presence, onClick: () -> Unit) {
                     color = Muted
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = onRenameClick, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.Edit, contentDescription = "Rename", tint = Muted, modifier = Modifier.size(16.dp))
+            }
+            Spacer(Modifier.width(4.dp))
             when (presence) {
                 Presence.CHECKING -> StatusPill("Checking…", Lavender100, Muted)
                 Presence.ONLINE -> StatusPill("Online", TealBg, Teal)

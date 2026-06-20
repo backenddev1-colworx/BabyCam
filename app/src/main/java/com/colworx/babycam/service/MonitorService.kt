@@ -24,6 +24,7 @@ import com.colworx.babycam.audio.CryDetector
 import com.colworx.babycam.audio.Sensitivity
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.webrtc.LiveSession
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +41,9 @@ class MonitorService : Service() {
     private var batteryReceiver: BroadcastReceiver? = null
     private var lowBatteryAlerted = false
 
+    /** Cached so notification callbacks (and the battery receiver) can check it without suspending. */
+    @Volatile private var notificationsEnabled = false
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
@@ -47,6 +51,18 @@ class MonitorService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
             .apply { setReferenceCounted(false); acquire() }
         registerBatteryReceiver()
+
+        // Keep the cached notifications flag in sync with the user's Settings choice.
+        scope.launch {
+            AppPreferences(applicationContext).notificationsEnabled.collect { notificationsEnabled = it }
+        }
+        // Cry detection runs ONLY while the user has it enabled (default OFF). Start/stop the mic
+        // loop reactively as the local toggle or the parent's remote toggle flips the pref.
+        scope.launch {
+            AppPreferences(applicationContext).cryDetectionEnabled.collect { enabled ->
+                if (enabled) startAudioMonitor() else stopAudioMonitor()
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -55,7 +71,7 @@ class MonitorService : Service() {
         else 0
         ServiceCompat.startForeground(this, NOTIF_ID, buildServiceNotification(), type)
         isRunning = true
-        startAudioMonitor()
+        // Cry monitoring is driven by the cryDetectionEnabled collector in onCreate, not here.
         return START_STICKY
     }
 
@@ -72,6 +88,7 @@ class MonitorService : Service() {
     // ── Audio / cry detection ─────────────────────────────────────────────────
 
     private fun startAudioMonitor() {
+        if (audioJob != null) return // already monitoring — avoid a second AudioRecord
         val sampleRate = 16000
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -174,12 +191,16 @@ class MonitorService : Service() {
         text: String,
         contentIntent: PendingIntent? = null
     ) {
+        // Alerts (cry / low-battery) are opt-in. The ongoing service notification is separate and
+        // always shown (Android requires it for a foreground service).
+        if (!notificationsEnabled) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val n = NotificationCompat.Builder(this, CHANNEL_ALERTS)
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .apply { contentIntent?.let { setContentIntent(it) } }
             .build()
