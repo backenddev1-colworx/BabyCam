@@ -6,6 +6,21 @@ This file is the source of truth for autonomous work. Check items only after the
 corresponding automated verification passes. Real-device acceptance testing remains
 the owner's final step.
 
+## Work Done Summary
+
+- [x] Camera, baby microphone, cry detection, torch, lullaby, parent camera, and Talk default OFF
+- [x] Parent given authoritative remote control with baby-side state acknowledgements
+- [x] Camera and microphone tracks provisioned without activating hardware on startup
+- [x] Reconnect flow de-duplicated; duplicate audio/video tracks and overlapping offers prevented
+- [x] MQTT retained SDP removed; presence checks separated from WebRTC negotiation
+- [x] Parent disconnect and control-lease timeout force all active monitoring features OFF
+- [x] Battery signaling de-duplicated and reconnect battery synchronization added
+- [x] App-lock now blocks saved-session restoration until the user unlocks
+- [x] Service coroutine, AudioRecord, receiver, wake-lock, boot, and restart lifecycle hardened
+- [x] Baby and parent UI updated to display confirmed ON/OFF states
+- [x] Unit tests, lint, Kotlin compilation, and debug APK build completed successfully
+- [x] Changes merged into `main`; physical devices kept disconnected
+
 ## Current
 
 - [x] Disconnect parent and baby Wi-Fi ADB devices
