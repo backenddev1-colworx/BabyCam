@@ -21,23 +21,35 @@ object PresenceChecker {
         val correlationId = UUID.randomUUID().toString()
         val resolved = AtomicBoolean(false)
         val mainHandler = Handler(Looper.getMainLooper())
+        var responseTimeout: Runnable? = null
+        var connectTimeout: Runnable? = null
 
         fun finish(online: Boolean) {
             if (resolved.compareAndSet(false, true)) {
+                responseTimeout?.let(mainHandler::removeCallbacks)
+                connectTimeout?.let(mainHandler::removeCallbacks)
                 mainHandler.post { onResult(online) }
                 client.close()
             }
         }
+        responseTimeout = Runnable { finish(false) }
+        connectTimeout = Runnable { finish(false) }
 
         client.connect(
             room = room,
             onMessage = { message ->
                 if (message.type == "presence_pong" && message.payload == correlationId) finish(true)
             },
-            onReady = { client.send("presence_ping", correlationId) },
+            onReady = {
+                connectTimeout?.let(mainHandler::removeCallbacks)
+                client.send("presence_ping", correlationId)
+                responseTimeout?.let { mainHandler.postDelayed(it, timeoutMs) }
+            },
             onState = {},
         )
 
-        mainHandler.postDelayed({ finish(false) }, timeoutMs)
+        connectTimeout?.let { mainHandler.postDelayed(it, CONNECT_TIMEOUT_MS) }
     }
+
+    private const val CONNECT_TIMEOUT_MS = 20_000L
 }

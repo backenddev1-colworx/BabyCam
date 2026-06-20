@@ -19,7 +19,7 @@ the owner's final step.
 - [x] Service coroutine, AudioRecord, receiver, wake-lock, boot, and restart lifecycle hardened
 - [x] Baby and parent UI updated to display confirmed ON/OFF states
 - [x] Unit tests, lint, Kotlin compilation, and debug APK build completed successfully
-- [x] Changes merged into `main`; physical devices kept disconnected
+- [x] Debug hardening applied in the `main` working tree; physical devices kept disconnected
 
 ## Current
 
@@ -30,10 +30,29 @@ the owner's final step.
 - [x] Implement framework-free parent-authoritative, default-OFF state model
 - [x] Integrate default-OFF state with WebRTC media and signaling
 
+## Debug Runtime Hardening
+
+- [x] Retry parent session sync until the baby acknowledges the active sync ID
+- [x] Reject stale control commands and stale state acknowledgements
+- [x] Deliver explicit parent disconnect before closing MQTT
+- [x] Correct parent-camera OFF state after reconnect replay
+- [x] Prevent parallel WebRTC and cry-detection microphone capture
+- [x] Relock the app after it leaves the foreground
+- [x] Start presence response timeout only after MQTT is connected
+- [x] Enable communication audio routing only while an audio feature is active
+- [x] Remove indefinite standby wake-lock ownership
+- [x] Run 50 unit tests, lint, and one final debug APK build
+
+## Deferred Public Release Work
+
+- [ ] Replace four-digit pairing security before any public release
+- [ ] Replace temporary Metered TURN credentials with a sustainable deployment
+- [ ] Configure release signing and public-store packaging
+
 ## P0: Privacy And Parent Control
 
 - [x] Baby camera is provisioned for WebRTC but never captures on startup
-- [x] Baby microphone track exists for WebRTC but starts disabled
+- [x] Baby microphone m-line is negotiated without opening hardware; track is created only on ON
 - [x] Cry detection starts disabled and stays disabled until explicitly enabled by parent
 - [x] Torch, lullaby, and parent camera sharing start disabled
 - [x] Parent UI state starts with camera and microphone controls OFF
@@ -86,7 +105,7 @@ the owner's final step.
 - [x] Add JVM tests for battery de-duplication and forced sync
 - [x] Add JVM tests for lifecycle/state reducers
 - [x] Run focused tests for policy changes
-- [x] Run full unit-test suite (37 tests)
+- [x] Run full unit-test suite (50 tests)
 - [x] Run lint/static checks
 - [x] Build final debug APK
 

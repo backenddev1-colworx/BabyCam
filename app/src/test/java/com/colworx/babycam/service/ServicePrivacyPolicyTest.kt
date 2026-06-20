@@ -57,4 +57,29 @@ class ServicePrivacyPolicyTest {
         assertTrue(PARENT_STANDBY_NOTIFICATION_TEXT.contains("connected", ignoreCase = true))
         assertTrue(PARENT_STANDBY_NOTIFICATION_TEXT.contains("off", ignoreCase = true))
     }
+
+    @Test
+    fun lowBatteryAlert_waitsForNotificationsAndRemainsEdgeTriggered() {
+        assertFalse(
+            shouldPostLowBatteryAlert(
+                percentage = 15,
+                notificationsEnabled = false,
+                alreadyAlerted = false,
+            ),
+        )
+        assertTrue(
+            shouldPostLowBatteryAlert(
+                percentage = 15,
+                notificationsEnabled = true,
+                alreadyAlerted = false,
+            ),
+        )
+        assertFalse(
+            shouldPostLowBatteryAlert(
+                percentage = 15,
+                notificationsEnabled = true,
+                alreadyAlerted = true,
+            ),
+        )
+    }
 }

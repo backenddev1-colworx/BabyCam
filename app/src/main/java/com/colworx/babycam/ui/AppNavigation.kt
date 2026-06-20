@@ -51,7 +51,7 @@ fun canRestoreSavedSession(lockEnabled: Boolean?, unlocked: Boolean): Boolean =
     lockEnabled == false || lockEnabled == true && unlocked
 
 @Composable
-fun AppNavigation(startAtParentLive: Boolean = false) {
+fun AppNavigation(startAtParentLive: Boolean = false, relockEpoch: Int = 0) {
     val nav = rememberNavController()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -65,6 +65,12 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
         pinManager.isEnabled.collect { enabled ->
             lockEnabled = enabled
             if (!enabled) unlocked = false
+        }
+    }
+
+    LaunchedEffect(relockEpoch) {
+        if (relockEpoch > 0 && shouldRelock(lockEnabled == true, unlocked)) {
+            unlocked = false
         }
     }
 

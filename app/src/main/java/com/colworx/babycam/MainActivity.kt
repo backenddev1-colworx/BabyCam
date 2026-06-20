@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.fragment.app.FragmentActivity
@@ -27,6 +28,7 @@ class MainActivity : FragmentActivity() {
 
     /** Drives navigation to the parent live screen when launched from a cry alert. */
     private var openParentLive by mutableStateOf(false)
+    private var relockEpoch by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,7 +40,10 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigation(startAtParentLive = openParentLive)
+                    AppNavigation(
+                        startAtParentLive = openParentLive,
+                        relockEpoch = relockEpoch,
+                    )
                 }
             }
         }
@@ -50,6 +55,11 @@ class MainActivity : FragmentActivity() {
         if (intent.getBooleanExtra(EXTRA_OPEN_PARENT_LIVE, false)) {
             openParentLive = true
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        relockEpoch++
     }
 
     private companion object {

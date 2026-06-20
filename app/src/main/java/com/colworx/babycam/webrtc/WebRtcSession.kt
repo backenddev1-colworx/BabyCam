@@ -3,6 +3,7 @@ package com.colworx.babycam.webrtc
 import android.content.Context
 import android.media.AudioManager
 import android.util.Log
+import com.colworx.babycam.audio.PcmFrameAccumulator
 import org.webrtc.AudioTrack
 import org.webrtc.AudioSource
 import org.webrtc.Camera2Enumerator
@@ -17,12 +18,15 @@ import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpTransceiver
+import org.webrtc.audio.JavaAudioDeviceModule
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Core WebRTC wrapper for BabyCam. One instance per active connection.
@@ -42,6 +46,7 @@ class WebRtcSession(
         fun onLocalIceCandidate(candidate: IceCandidate)
         fun onRemoteVideoTrack(track: VideoTrack)
         fun onRemoteAudioTrack(track: AudioTrack)
+        fun onLocalAudioSamples(samples: ShortArray)
         fun onConnectionStateChange(state: PeerConnection.IceConnectionState)
     }
 
@@ -53,6 +58,10 @@ class WebRtcSession(
     private var videoSource: VideoSource? = null
     private var surfaceHelper: SurfaceTextureHelper? = null
     private var audioSource: AudioSource? = null
+    private var audioTransceiver: RtpTransceiver? = null
+    private var localAudioActive = false
+    private var remoteAudioActive = false
+    private val pcmFrameAccumulator = PcmFrameAccumulator()
     var localVideoTrack: VideoTrack? = null
         private set
     var localAudioTrack: AudioTrack? = null
@@ -89,17 +98,33 @@ class WebRtcSession(
     }
 
     fun initialize() {
-        configureAudioRouting()
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(appContext)
                 .createInitializationOptions()
         )
         val encoder = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoder = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+        val audioDeviceModule = JavaAudioDeviceModule.builder(appContext)
+            .setSamplesReadyCallback { audioSamples ->
+                if (audioSamples.audioFormat != android.media.AudioFormat.ENCODING_PCM_16BIT) {
+                    return@setSamplesReadyCallback
+                }
+                val bytes = audioSamples.data
+                val shorts = ShortArray(bytes.size / 2)
+                ByteBuffer.wrap(bytes)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                    .asShortBuffer()
+                    .get(shorts)
+                val targetSize = (audioSamples.sampleRate / 10) * audioSamples.channelCount
+                pcmFrameAccumulator.append(shorts, targetSize).forEach(listener::onLocalAudioSamples)
+            }
+            .createAudioDeviceModule()
         factory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(encoder)
             .setVideoDecoderFactory(decoder)
+            .setAudioDeviceModule(audioDeviceModule)
             .createPeerConnectionFactory()
+        audioDeviceModule.release()
 
         val config = PeerConnection.RTCConfiguration(iceServers()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -234,21 +259,50 @@ class WebRtcSession(
         }
     }
 
-    /** Provisions one disabled local microphone track. */
+    /**
+     * Negotiates an audio m-line without opening microphone hardware. The local source is attached
+     * only by [setLocalAudioEnabled], so default-OFF is a real capture-off state.
+     */
     fun startAudio() {
-        if (localAudioTrack != null) return
-        val source = factory.createAudioSource(MediaConstraints())
-        audioSource = source
-        val track = factory.createAudioTrack("AUDIO", source)
-        track.setEnabled(false)
-        localAudioTrack = track
-        peerConnection?.addTrack(track, listOf("STREAM"))
+        if (audioTransceiver != null) return
+        audioTransceiver = peerConnection?.addTransceiver(
+            MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV),
+        )
     }
 
     fun setLocalAudioEnabled(enabled: Boolean): Boolean {
-        val track = localAudioTrack ?: return false
-        track.setEnabled(enabled)
-        return track.enabled()
+        val transceiver = audioTransceiver ?: return false
+        if (!enabled) {
+            transceiver.sender.setTrack(null, false)
+            localAudioTrack?.dispose()
+            localAudioTrack = null
+            audioSource?.dispose()
+            audioSource = null
+            localAudioActive = false
+            updateAudioRouting()
+            return false
+        }
+        localAudioTrack?.let { return it.enabled() }
+        val source = factory.createAudioSource(MediaConstraints())
+        audioSource = source
+        val track = factory.createAudioTrack("AUDIO", source)
+        track.setEnabled(true)
+        if (!transceiver.sender.setTrack(track, false)) {
+            track.dispose()
+            source.dispose()
+            audioSource = null
+            return false
+        }
+        localAudioTrack = track
+        localAudioActive = true
+        updateAudioRouting()
+        return true
+    }
+
+    fun setRemoteAudioPlaybackActive(active: Boolean) {
+        remoteAudioActive = active
+        updateAudioRouting()
     }
 
     fun setLocalVideoEnabled(enabled: Boolean): Boolean {
@@ -303,12 +357,14 @@ class WebRtcSession(
      * max volume — the classic "WebRTC audio is whisper-quiet on Android" gotcha. Force
      * speakerphone + communication mode on both baby and parent so talk/listen is audible.
      */
-    private fun configureAudioRouting() {
+    private fun updateAudioRouting() {
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager.isSpeakerphoneOn = true
-        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-        audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVol, 0)
+        if (localAudioActive || remoteAudioActive) {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.isSpeakerphoneOn = true
+        } else {
+            restoreAudioRouting()
+        }
     }
 
     private fun restoreAudioRouting() {
@@ -421,9 +477,15 @@ class WebRtcSession(
 
     fun close() {
         try { videoCapturer?.stopCapture() } catch (_: Exception) {}
+        audioTransceiver?.sender?.setTrack(null, false)
+        localAudioActive = false
+        remoteAudioActive = false
+        localAudioTrack?.dispose()
+        localAudioTrack = null
         videoCapturer?.dispose()
         videoSource?.dispose()
         audioSource?.dispose()
+        audioSource = null
         surfaceHelper?.dispose()
         peerConnection?.close()
         peerConnection = null

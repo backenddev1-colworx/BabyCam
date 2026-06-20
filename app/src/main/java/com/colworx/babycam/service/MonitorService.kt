@@ -18,12 +18,15 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.colworx.babycam.MainActivity
 import com.colworx.babycam.audio.CryDetector
+import com.colworx.babycam.audio.CryAudioBridge
+import com.colworx.babycam.audio.CryAudioCoordinator
 import com.colworx.babycam.audio.Sensitivity
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.webrtc.LiveSession
@@ -46,6 +49,9 @@ class MonitorService : Service() {
     private var audioRecord: AudioRecord? = null
     private var batteryReceiver: BroadcastReceiver? = null
     private var lowBatteryAlerted = false
+    @Volatile private var currentBatteryPercentage = -1
+    private var cryAudioCoordinator: CryAudioCoordinator? = null
+    private var cryDetector: CryDetector? = null
 
     /** Cached so notification callbacks (and the battery receiver) can check it without suspending. */
     @Volatile private var notificationsEnabled = false
@@ -55,25 +61,43 @@ class MonitorService : Service() {
         createNotificationChannels()
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
-            .apply { setReferenceCounted(false); acquire() }
+            .apply { setReferenceCounted(false) }
 
         val preferences = AppPreferences(applicationContext)
         scope.launch {
             notificationsEnabled = preferences.notificationsEnabled.first()
             registerBatteryReceiver()
-            preferences.notificationsEnabled.collect { notificationsEnabled = it }
+            preferences.notificationsEnabled.collect { enabled ->
+                notificationsEnabled = enabled
+                maybePostLowBatteryAlert()
+            }
         }
         scope.launch {
             // A service/process restart is not user consent to reopen a second microphone.
             preferences.setCryDetectionEnabled(false)
+            val sensitivityFloat = preferences.crySensitivity.first()
+            cryDetector = CryDetector(
+                when {
+                    sensitivityFloat < 0.33f -> Sensitivity.LOW
+                    sensitivityFloat < 0.66f -> Sensitivity.MEDIUM
+                    else -> Sensitivity.HIGH
+                }
+            )
+            val coordinator = CryAudioCoordinator(
+                startFallback = ::startAudioMonitor,
+                stopFallback = ::stopAudioMonitor,
+                consumeSamples = ::processCrySamples,
+            )
+            cryAudioCoordinator = coordinator
+            CryAudioBridge.attach(coordinator)
             preferences.cryDetectionEnabled.collect { enabled ->
-                if (enabled) startAudioMonitor() else stopAudioMonitor()
+                coordinator.setCryEnabled(enabled)
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         else 0
         ServiceCompat.startForeground(this, NOTIF_ID, buildServiceNotification(), type)
@@ -86,6 +110,11 @@ class MonitorService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        cryAudioCoordinator?.let {
+            it.setCryEnabled(false)
+            CryAudioBridge.detach(it)
+        }
+        cryAudioCoordinator = null
         stopAudioMonitor()
         scope.cancel()
         batteryReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -117,35 +146,28 @@ class MonitorService : Service() {
             )
         }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED } ?: return
         audioRecord = ar
+        renewCryWakeLock()
 
         val frame = ShortArray(bufferSize / 2)
 
         audioJob = scope.launch {
-            // Read sensitivity from DataStore; map 0.0-1.0 float → Sensitivity enum.
-            val sensitivityFloat = AppPreferences(applicationContext).crySensitivity.first()
-            val detectorSens = when {
-                sensitivityFloat < 0.33f -> Sensitivity.LOW
-                sensitivityFloat < 0.66f -> Sensitivity.MEDIUM
-                else -> Sensitivity.HIGH
-            }
-            val detector = CryDetector(detectorSens)
+            var nextWakeLockRenewal = SystemClock.elapsedRealtime() + WAKE_LOCK_RENEW_MS
             try {
                 ar.startRecording()
                 while (isActive) {
+                    if (SystemClock.elapsedRealtime() >= nextWakeLockRenewal) {
+                        renewCryWakeLock()
+                        nextWakeLockRenewal = SystemClock.elapsedRealtime() + WAKE_LOCK_RENEW_MS
+                    }
                     val read = ar.read(frame, 0, frame.size)
-                    if (read > 0 && detector.process(frame.copyOf(read))) {
-                        LiveSession.sendCry()
-                        sendAlertNotification(
-                            id = NOTIF_CRY_ID,
-                            title = "Baby is crying!",
-                            text = "Tap to open BabyCam",
-                            contentIntent = parentLivePendingIntent()
-                        )
+                    if (read > 0) {
+                        cryAudioCoordinator?.submitFallbackSamples(frame.copyOf(read))
                     }
                 }
             } finally {
                 releaseAudioRecord(ar)
                 if (audioRecord === ar) audioRecord = null
+                releaseCryWakeLock()
             }
         }
     }
@@ -157,11 +179,31 @@ class MonitorService : Service() {
         audioRecord = null
         job?.cancel()
         record?.let(::releaseAudioRecord)
+        releaseCryWakeLock()
     }
 
     private fun releaseAudioRecord(record: AudioRecord) {
         runCatching { record.stop() }
         runCatching { record.release() }
+    }
+
+    private fun renewCryWakeLock() {
+        runCatching { wakeLock?.acquire(WAKE_LOCK_TIMEOUT_MS) }
+    }
+
+    private fun releaseCryWakeLock() {
+        runCatching { wakeLock?.let { if (it.isHeld) it.release() } }
+    }
+
+    private fun processCrySamples(samples: ShortArray) {
+        if (cryDetector?.process(samples) != true) return
+        LiveSession.sendCry()
+        sendAlertNotification(
+            id = NOTIF_CRY_ID,
+            title = "Baby is crying!",
+            text = "Tap to open BabyCam",
+            contentIntent = parentLivePendingIntent(),
+        )
     }
 
     // ── Battery monitoring ────────────────────────────────────────────────────
@@ -172,15 +214,11 @@ class MonitorService : Service() {
                 val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                 val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
                 val pct = if (scale > 0) level * 100 / scale else -1
-                if (pct in 1..LOW_BATTERY_PCT && !lowBatteryAlerted) {
-                    lowBatteryAlerted = true
-                    sendAlertNotification(
-                        id = NOTIF_BATT_ID,
-                        title = "Baby phone battery low",
-                        text = "Battery at $pct% — plug in soon"
-                    )
-                } else if (pct > LOW_BATTERY_PCT) {
+                currentBatteryPercentage = pct
+                if (pct > LOW_BATTERY_PCT) {
                     lowBatteryAlerted = false
+                } else {
+                    maybePostLowBatteryAlert()
                 }
             }
         }
@@ -206,15 +244,25 @@ class MonitorService : Service() {
             .build()
     }
 
+    private fun maybePostLowBatteryAlert() {
+        val pct = currentBatteryPercentage
+        if (!shouldPostLowBatteryAlert(pct, notificationsEnabled, lowBatteryAlerted)) return
+        lowBatteryAlerted = sendAlertNotification(
+            id = NOTIF_BATT_ID,
+            title = "Baby phone battery low",
+            text = "Battery at $pct% — plug in soon",
+        )
+    }
+
     private fun sendAlertNotification(
         id: Int,
         title: String,
         text: String,
         contentIntent: PendingIntent? = null
-    ) {
+    ): Boolean {
         // Alerts (cry / low-battery) are opt-in. The ongoing service notification is separate and
         // always shown (Android requires it for a foreground service).
-        if (!notificationsEnabled) return
+        if (!notificationsEnabled) return false
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val n = NotificationCompat.Builder(this, CHANNEL_ALERTS)
             .setContentTitle(title)
@@ -226,6 +274,7 @@ class MonitorService : Service() {
             .apply { contentIntent?.let { setContentIntent(it) } }
             .build()
         nm.notify(id, n)
+        return true
     }
 
     /** PendingIntent that opens MainActivity straight into the parent live view. */
@@ -260,9 +309,19 @@ class MonitorService : Service() {
         const val CHANNEL_ALERTS = "babycam_alerts"
         const val LOW_BATTERY_PCT = 20
         private const val WAKE_LOCK_TAG = "BabyCam::Monitor"
+        private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
+        private const val WAKE_LOCK_RENEW_MS = 5 * 60 * 1000L
 
         @Volatile
         var isRunning: Boolean = false
             private set
     }
 }
+
+fun shouldPostLowBatteryAlert(
+    percentage: Int,
+    notificationsEnabled: Boolean,
+    alreadyAlerted: Boolean,
+): Boolean = percentage in 1..MonitorService.LOW_BATTERY_PCT &&
+    notificationsEnabled &&
+    !alreadyAlerted

@@ -32,6 +32,7 @@ class SessionControlPolicyTest {
                 CONTROL_CRY,
                 CONTROL_LULLABY,
                 CONTROL_PARENT_CAMERA,
+                CONTROL_PARENT_TALK,
                 CONTROL_VIDEO_SAVER,
             ),
             commands.map { it.first },
@@ -70,5 +71,47 @@ class SessionControlPolicyTest {
         assertFalse(gate.accept("sync-1"))
         assertTrue(gate.accept("sync-2"))
         assertEquals("sync-2", gate.currentId())
+    }
+
+    @Test
+    fun revisionGate_rejectsOlderCommandsForTheSameControl() {
+        val gate = ControlRevisionGate()
+
+        assertTrue(gate.accept(CONTROL_CAMERA, 4))
+        assertFalse(gate.accept(CONTROL_CAMERA, 3))
+        assertFalse(gate.accept(CONTROL_CAMERA, 4))
+        assertTrue(gate.accept(CONTROL_MICROPHONE, 1))
+        assertTrue(gate.accept(CONTROL_CAMERA, 5))
+    }
+
+    @Test
+    fun commandTracker_acceptsOnlyTheLatestAcknowledgement() {
+        val tracker = ParentCommandTracker()
+        val first = tracker.next(CONTROL_CAMERA)
+        val second = tracker.next(CONTROL_CAMERA)
+
+        assertFalse(tracker.acceptAck(CONTROL_CAMERA, first))
+        assertTrue(tracker.acceptAck(CONTROL_CAMERA, second))
+        assertFalse(tracker.acceptAck(CONTROL_CAMERA, second))
+    }
+
+    @Test
+    fun syncTracker_retriesUntilExactSyncIsAcknowledged() {
+        val tracker = ParentSyncTracker()
+
+        tracker.begin("sync-1")
+        assertTrue(tracker.shouldRetry("sync-1"))
+        assertFalse(tracker.acknowledge("sync-old"))
+        assertTrue(tracker.shouldRetry("sync-1"))
+        assertTrue(tracker.acknowledge("sync-1"))
+        assertFalse(tracker.shouldRetry("sync-1"))
+    }
+
+    @Test
+    fun cameraActualState_usesTransitionResultForOnAndOff() {
+        assertTrue(cameraActualState(requestedOn = true, transitionSucceeded = true))
+        assertFalse(cameraActualState(requestedOn = true, transitionSucceeded = false))
+        assertFalse(cameraActualState(requestedOn = false, transitionSucceeded = false))
+        assertFalse(cameraActualState(requestedOn = false, transitionSucceeded = true))
     }
 }

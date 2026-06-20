@@ -27,6 +27,7 @@ data class SessionControlState(
         CONTROL_CRY to cryDetection,
         CONTROL_LULLABY to lullaby,
         CONTROL_PARENT_CAMERA to parentCamera,
+        CONTROL_PARENT_TALK to parentTalk,
         CONTROL_VIDEO_SAVER to videoSaver,
     )
 
@@ -56,6 +57,65 @@ class SessionSyncGate {
     @Synchronized
     fun currentId(): String? = acceptedId
 }
+
+class ControlRevisionGate {
+    private val latestByControl = mutableMapOf<String, Long>()
+
+    @Synchronized
+    fun accept(control: String, revision: Long): Boolean {
+        if (revision <= 0L || revision <= latestByControl.getOrDefault(control, 0L)) return false
+        latestByControl[control] = revision
+        return true
+    }
+
+    @Synchronized
+    fun reset() {
+        latestByControl.clear()
+    }
+}
+
+class ParentCommandTracker {
+    private var nextRevision = 0L
+    private val pendingByControl = mutableMapOf<String, Long>()
+
+    @Synchronized
+    fun next(control: String): Long {
+        val revision = ++nextRevision
+        pendingByControl[control] = revision
+        return revision
+    }
+
+    @Synchronized
+    fun acceptAck(control: String, revision: Long): Boolean {
+        if (pendingByControl[control] != revision) return false
+        pendingByControl.remove(control)
+        return true
+    }
+}
+
+class ParentSyncTracker {
+    private var activeSyncId: String? = null
+    private var acknowledged = false
+
+    @Synchronized
+    fun begin(syncId: String) {
+        activeSyncId = syncId
+        acknowledged = false
+    }
+
+    @Synchronized
+    fun acknowledge(syncId: String): Boolean {
+        if (syncId.isBlank() || syncId != activeSyncId || acknowledged) return false
+        acknowledged = true
+        return true
+    }
+
+    @Synchronized
+    fun shouldRetry(syncId: String): Boolean = activeSyncId == syncId && !acknowledged
+}
+
+fun cameraActualState(requestedOn: Boolean, transitionSucceeded: Boolean): Boolean =
+    requestedOn && transitionSucceeded
 
 const val CONTROL_CAMERA = "camera"
 const val CONTROL_MICROPHONE = "microphone"

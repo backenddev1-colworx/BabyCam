@@ -10,6 +10,7 @@ import android.os.BatteryManager
 import android.os.SystemClock
 import android.util.Log
 import com.colworx.babycam.audio.LullabyPlayer
+import com.colworx.babycam.audio.CryAudioBridge
 import com.colworx.babycam.data.AppPreferences
 import com.colworx.babycam.service.CryNotifier
 import com.colworx.babycam.signaling.SignalMessage
@@ -24,6 +25,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.webrtc.AudioTrack
 import org.webrtc.IceCandidate
@@ -56,6 +60,10 @@ class BabyCamConnection(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val stopped = AtomicBoolean(false)
     private val syncGate = SessionSyncGate()
+    private val syncTracker = ParentSyncTracker()
+    private val commandTracker = ParentCommandTracker()
+    private val controlRevisionGate = ControlRevisionGate()
+    private val controlMutex = Mutex()
     private val reconnectPending = AtomicBoolean(false)
     private val offerWorkerRunning = AtomicBoolean(false)
     private val offerRequested = AtomicBoolean(false)
@@ -70,6 +78,8 @@ class BabyCamConnection(
     private var batteryReceiver: BroadcastReceiver? = null
     private var leaseJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var syncRetryJob: Job? = null
+    private val disconnectAcknowledged = CompletableDeferred<Unit>()
     private val batteryPublisher = BatteryPublisher { percentage ->
         if (hasAcceptedParentSync && !stopped.get()) sendBattery(percentage)
     }
@@ -120,7 +130,15 @@ class BabyCamConnection(
     private fun beginParentSync() {
         val syncId = UUID.randomUUID().toString()
         currentSyncId = syncId
+        syncTracker.begin(syncId)
         signaling.send("session_sync", syncId)
+        syncRetryJob?.cancel()
+        syncRetryJob = scope.launch {
+            while (isActive && !stopped.get() && syncTracker.shouldRetry(syncId)) {
+                delay(SYNC_RETRY_MS)
+                if (syncTracker.shouldRetry(syncId)) signaling.send("session_sync", syncId)
+            }
+        }
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (isActive && !stopped.get() && currentSyncId == syncId) {
@@ -131,17 +149,25 @@ class BabyCamConnection(
     }
 
     private fun onSignal(msg: SignalMessage) {
+        if (msg.type == "parent_disconnect_ack" && role == ConnRole.PARENT) {
+            if (msg.payload == currentSyncId && !disconnectAcknowledged.isCompleted) {
+                disconnectAcknowledged.complete(Unit)
+            }
+            return
+        }
         if (stopped.get()) return
         when (msg.type) {
             "presence_ping" -> if (role == ConnRole.BABY && msg.payload.isNotBlank()) {
                 signaling.send("presence_pong", msg.payload)
             }
             "session_sync" -> if (role == ConnRole.BABY) acceptParentSync(msg.payload)
+            "session_ready" -> if (role == ConnRole.PARENT) acceptSessionReady(msg.payload)
             "control_lease" -> if (role == ConnRole.BABY && msg.payload == currentSyncId) {
                 refreshLease()
             }
             "parent_disconnect" -> if (role == ConnRole.BABY && msg.payload == currentSyncId) {
                 applyFailSafe("parent disconnect")
+                signaling.send("parent_disconnect_ack", msg.payload)
             }
             "control" -> if (role == ConnRole.BABY) applyControl(msg.payload)
             "state_ack" -> if (role == ConnRole.PARENT) receiveStateAck(msg.payload)
@@ -165,13 +191,22 @@ class BabyCamConnection(
     }
 
     private fun acceptParentSync(syncId: String) {
+        if (syncId.isBlank()) return
+        signaling.send("session_ready", syncId)
         if (!syncGate.accept(syncId)) return
+        controlRevisionGate.reset()
         currentSyncId = syncId
         hasAcceptedParentSync = true
         refreshLease()
         sendStateSnapshot()
         batteryPublisher.forceCurrent()
         requestBabyOffer()
+    }
+
+    private fun acceptSessionReady(syncId: String) {
+        if (syncTracker.acknowledge(syncId)) {
+            syncRetryJob?.cancel()
+        }
     }
 
     private fun refreshLease() {
@@ -256,49 +291,59 @@ class BabyCamConnection(
         val commandId = json.optString("commandId")
         val name = json.optString("name")
         val enabled = json.optBoolean("enabled")
-        if (syncId != currentSyncId || commandId.isBlank()) return
-        refreshLease()
+        val revision = json.optLong("revision")
+        if (syncId != currentSyncId || commandId.isBlank() || revision <= 0L) return
 
-        if (name == CONTROL_CRY) {
-            scope.launch {
-                AppPreferences(context).setCryDetectionEnabled(enabled)
-                actualState = actualState.withControl(name, enabled)
-                sendStateAck(commandId, name, enabled)
-            }
-            return
-        }
-
-        val actual = when (name) {
-            CONTROL_CAMERA -> {
-                session.setCameraStandby(!enabled)
-            }
-            CONTROL_MICROPHONE -> session.setLocalAudioEnabled(enabled)
-            CONTROL_TORCH -> controlTorch(enabled)
-            CONTROL_LULLABY -> {
-                if (enabled) {
-                    LullabyPlayer.play(LullabyPlayer.Sound.BELL, context.applicationContext)
-                } else {
-                    LullabyPlayer.stop()
+        scope.launch {
+            controlMutex.withLock {
+                if (syncId != currentSyncId || !controlRevisionGate.accept(name, revision)) {
+                    return@withLock
                 }
-                enabled
+                refreshLease()
+                if (name == CONTROL_CRY) {
+                    AppPreferences(context).setCryDetectionEnabled(enabled)
+                    actualState = actualState.withControl(name, enabled)
+                    sendStateAck(commandId, revision, name, enabled)
+                    return@withLock
+                }
+
+                val actual = when (name) {
+                    CONTROL_CAMERA -> session.setCameraStandby(!enabled)
+                    CONTROL_MICROPHONE -> setBabyMicrophone(enabled)
+                    CONTROL_TORCH -> controlTorch(enabled)
+                    CONTROL_LULLABY -> {
+                        if (enabled) {
+                            LullabyPlayer.play(LullabyPlayer.Sound.BELL, context.applicationContext)
+                        } else {
+                            LullabyPlayer.stop()
+                        }
+                        enabled
+                    }
+                    CONTROL_PARENT_CAMERA -> enabled
+                    CONTROL_PARENT_TALK -> {
+                        session.setRemoteAudioPlaybackActive(enabled)
+                        enabled
+                    }
+                    CONTROL_VIDEO_SAVER -> {
+                        if (enabled) session.changeCaptureFormat(640, 480, 15)
+                        else session.changeCaptureFormat(1280, 720, 30)
+                        enabled
+                    }
+                    else -> return@withLock
+                }
+                actualState = actualState.withControl(name, actual)
+                sendStateAck(commandId, revision, name, actual)
             }
-            CONTROL_PARENT_CAMERA -> enabled
-            CONTROL_VIDEO_SAVER -> {
-                if (enabled) session.changeCaptureFormat(640, 480, 15)
-                else session.changeCaptureFormat(1280, 720, 30)
-                enabled
-            }
-            else -> return
         }
-        actualState = actualState.withControl(name, actual)
-        sendStateAck(commandId, name, actual)
     }
 
     private fun sendControl(name: String, enabled: Boolean) {
         val syncId = currentSyncId ?: return
+        val revision = commandTracker.next(name)
         val payload = JSONObject()
             .put("syncId", syncId)
             .put("commandId", UUID.randomUUID().toString())
+            .put("revision", revision)
             .put("name", name)
             .put("enabled", enabled)
             .toString()
@@ -308,16 +353,13 @@ class BabyCamConnection(
     private fun replayDesiredState() {
         if (role != ConnRole.PARENT) return
         desiredState.commands().forEach { (name, enabled) -> sendControl(name, enabled) }
-        session.setLocalAudioEnabled(desiredState.parentTalk)
-        session.setCameraStandby(!desiredState.parentCamera)
-        val parentCameraActual = if (desiredState.parentCamera) {
-            !session.isCameraInStandby
-        } else {
-            session.isCameraInStandby
-        }
+        val parentTalkActual = session.setLocalAudioEnabled(desiredState.parentTalk)
+        session.setRemoteAudioPlaybackActive(desiredState.microphone)
+        val cameraTransition = session.setCameraStandby(!desiredState.parentCamera)
+        val parentCameraActual = cameraActualState(desiredState.parentCamera, cameraTransition)
         actualState = actualState.copy(
             parentCamera = parentCameraActual,
-            parentTalk = desiredState.parentTalk,
+            parentTalk = parentTalkActual,
         )
         onControlState(actualState)
     }
@@ -326,7 +368,10 @@ class BabyCamConnection(
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         if (json.optString("syncId") != currentSyncId) return
         val name = json.optString("name")
+        val revision = json.optLong("revision")
+        if (!commandTracker.acceptAck(name, revision)) return
         val enabled = json.optBoolean("enabled")
+        if (name == CONTROL_MICROPHONE) session.setRemoteAudioPlaybackActive(enabled)
         actualState = actualState.withControl(name, enabled)
         if (name == CONTROL_TORCH) onTorchState(enabled)
         onControlState(actualState)
@@ -335,18 +380,21 @@ class BabyCamConnection(
     private fun receiveStateSnapshot(payload: String) {
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         if (json.optString("syncId") != currentSyncId) return
+        acceptSessionReady(json.optString("syncId"))
         actualState = stateFromJson(json)
+        session.setRemoteAudioPlaybackActive(actualState.microphone)
         onTorchState(actualState.torch)
         onControlState(actualState)
     }
 
-    private fun sendStateAck(commandId: String, name: String, enabled: Boolean) {
+    private fun sendStateAck(commandId: String, revision: Long, name: String, enabled: Boolean) {
         val syncId = currentSyncId ?: return
         signaling.send(
             "state_ack",
             JSONObject()
                 .put("syncId", syncId)
                 .put("commandId", commandId)
+                .put("revision", revision)
                 .put("name", name)
                 .put("enabled", enabled)
                 .toString(),
@@ -362,7 +410,7 @@ class BabyCamConnection(
         if (role != ConnRole.BABY) return
         Log.w(TAG, "Applying fail-safe OFF: $reason")
         session.setCameraStandby(true)
-        session.setLocalAudioEnabled(false)
+        setBabyMicrophone(false)
         controlTorch(false)
         LullabyPlayer.stop()
         scope.launch { AppPreferences(context).setCryDetectionEnabled(false) }
@@ -395,6 +443,7 @@ class BabyCamConnection(
         val actual = session.setLocalAudioEnabled(on)
         actualState = actualState.copy(parentTalk = actual)
         onControlState(actualState)
+        sendControl(CONTROL_PARENT_TALK, actual)
     }
 
     fun switchCamera() = session.switchCamera()
@@ -436,17 +485,27 @@ class BabyCamConnection(
 
     fun stop() {
         if (!stopped.compareAndSet(false, true)) return
-        if (role == ConnRole.PARENT) {
-            currentSyncId?.let { signaling.send("parent_disconnect", it) }
-        }
         heartbeatJob?.cancel()
         leaseJob?.cancel()
+        syncRetryJob?.cancel()
         LullabyPlayer.stop()
+        if (role == ConnRole.BABY) setBabyMicrophone(false)
         batteryReceiver?.let { runCatching { context.applicationContext.unregisterReceiver(it) } }
         batteryReceiver = null
-        signaling.close()
         session.close()
-        scope.cancel()
+        if (role == ConnRole.PARENT && currentSyncId != null) {
+            signaling.send("parent_disconnect", currentSyncId.orEmpty())
+            scope.launch {
+                withTimeoutOrNull(DISCONNECT_ACK_TIMEOUT_MS) {
+                    disconnectAcknowledged.await()
+                }
+                signaling.close()
+                scope.cancel()
+            }
+        } else {
+            signaling.close()
+            scope.cancel()
+        }
     }
 
     override fun onLocalIceCandidate(candidate: IceCandidate) {
@@ -463,6 +522,9 @@ class BabyCamConnection(
 
     override fun onRemoteVideoTrack(track: VideoTrack) = onRemoteVideo(track)
     override fun onRemoteAudioTrack(track: AudioTrack) = onRemoteAudio(track)
+    override fun onLocalAudioSamples(samples: ShortArray) {
+        if (role == ConnRole.BABY) CryAudioBridge.submitWebRtcSamples(samples)
+    }
 
     override fun onConnectionStateChange(state: PeerConnection.IceConnectionState) {
         if (stopped.get()) return
@@ -513,6 +575,19 @@ class BabyCamConnection(
         false
     }
 
+    private fun setBabyMicrophone(enabled: Boolean): Boolean {
+        if (role != ConnRole.BABY) return session.setLocalAudioEnabled(enabled)
+        if (enabled) {
+            CryAudioBridge.beforeWebRtcMicEnabled()
+            val actual = session.setLocalAudioEnabled(true)
+            if (!actual) CryAudioBridge.afterWebRtcMicDisabled()
+            return actual
+        }
+        session.setLocalAudioEnabled(false)
+        CryAudioBridge.afterWebRtcMicDisabled()
+        return false
+    }
+
     private fun sdpEnvelope(syncId: String, sdp: String): String =
         JSONObject().put("syncId", syncId).put("sdp", sdp).toString()
 
@@ -547,5 +622,7 @@ class BabyCamConnection(
         private const val LEASE_HEARTBEAT_MS = 15_000L
         private const val CONTROL_LEASE_MS = 45_000L
         private const val LEASE_CHECK_MS = 5_000L
+        private const val SYNC_RETRY_MS = 2_000L
+        private const val DISCONNECT_ACK_TIMEOUT_MS = 1_000L
     }
 }
