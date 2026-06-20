@@ -10,7 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.colworx.babycam.MainActivity
@@ -33,31 +32,24 @@ import com.colworx.babycam.MainActivity
  */
 class ParentMonitorService : Service() {
 
-    private var wakeLock: PowerManager.WakeLock? = null
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
-            .apply { setReferenceCounted(false); acquire() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         else 0
         ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(), type)
         isRunning = true
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         isRunning = false
-        wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
 
@@ -72,7 +64,7 @@ class ParentMonitorService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_SERVICE)
             .setContentTitle("BabyCam")
-            .setContentText("Listening for baby alerts")
+            .setContentText(PARENT_STANDBY_NOTIFICATION_TEXT)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(pi)
             .setOngoing(true)
@@ -93,10 +85,11 @@ class ParentMonitorService : Service() {
     companion object {
         const val NOTIF_ID = 2001
         const val CHANNEL_SERVICE = "babycam_parent_monitor"
-        private const val WAKE_LOCK_TAG = "BabyCam::ParentMonitor"
 
         @Volatile
         var isRunning: Boolean = false
             private set
     }
 }
+
+const val PARENT_STANDBY_NOTIFICATION_TEXT = "Live audio and baby alerts are active"

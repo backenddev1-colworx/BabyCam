@@ -29,13 +29,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MonitorService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val serviceJob = SupervisorJob()
+    private val scope = CoroutineScope(serviceJob + Dispatchers.IO)
     private var audioJob: Job? = null
     private var audioRecord: AudioRecord? = null
     private var batteryReceiver: BroadcastReceiver? = null
@@ -50,16 +53,17 @@ class MonitorService : Service() {
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
             .apply { setReferenceCounted(false); acquire() }
-        registerBatteryReceiver()
 
-        // Keep the cached notifications flag in sync with the user's Settings choice.
+        val preferences = AppPreferences(applicationContext)
         scope.launch {
-            AppPreferences(applicationContext).notificationsEnabled.collect { notificationsEnabled = it }
+            notificationsEnabled = preferences.notificationsEnabled.first()
+            registerBatteryReceiver()
+            preferences.notificationsEnabled.collect { notificationsEnabled = it }
         }
-        // Cry detection runs ONLY while the user has it enabled (default OFF). Start/stop the mic
-        // loop reactively as the local toggle or the parent's remote toggle flips the pref.
         scope.launch {
-            AppPreferences(applicationContext).cryDetectionEnabled.collect { enabled ->
+            // A service/process restart is not user consent to reopen a second microphone.
+            preferences.setCryDetectionEnabled(false)
+            preferences.cryDetectionEnabled.collect { enabled ->
                 if (enabled) startAudioMonitor() else stopAudioMonitor()
             }
         }
@@ -72,7 +76,7 @@ class MonitorService : Service() {
         ServiceCompat.startForeground(this, NOTIF_ID, buildServiceNotification(), type)
         isRunning = true
         // Cry monitoring is driven by the cryDetectionEnabled collector in onCreate, not here.
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -80,7 +84,9 @@ class MonitorService : Service() {
     override fun onDestroy() {
         isRunning = false
         stopAudioMonitor()
+        scope.cancel()
         batteryReceiver?.let { runCatching { unregisterReceiver(it) } }
+        batteryReceiver = null
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
@@ -117,30 +123,39 @@ class MonitorService : Service() {
                 else -> Sensitivity.HIGH
             }
             val detector = CryDetector(detectorSens)
-            ar.startRecording()
-            while (isActive) {
-                val read = ar.read(frame, 0, frame.size)
-                if (read > 0 && detector.process(frame.copyOf(read))) {
-                    // Notify the parent device over the active connection.
-                    LiveSession.sendCry()
-                    // Local fallback notification on the baby phone.
-                    sendAlertNotification(
-                        id = NOTIF_CRY_ID,
-                        title = "Baby is crying!",
-                        text = "Tap to open BabyCam",
-                        contentIntent = parentLivePendingIntent()
-                    )
+            try {
+                ar.startRecording()
+                while (isActive) {
+                    val read = ar.read(frame, 0, frame.size)
+                    if (read > 0 && detector.process(frame.copyOf(read))) {
+                        LiveSession.sendCry()
+                        sendAlertNotification(
+                            id = NOTIF_CRY_ID,
+                            title = "Baby is crying!",
+                            text = "Tap to open BabyCam",
+                            contentIntent = parentLivePendingIntent()
+                        )
+                    }
                 }
+            } finally {
+                releaseAudioRecord(ar)
+                if (audioRecord === ar) audioRecord = null
             }
-            runCatching { ar.stop() }
-            runCatching { ar.release() }
         }
     }
 
     private fun stopAudioMonitor() {
-        audioJob?.cancel()
+        val job = audioJob
+        val record = audioRecord
         audioJob = null
         audioRecord = null
+        job?.cancel()
+        record?.let(::releaseAudioRecord)
+    }
+
+    private fun releaseAudioRecord(record: AudioRecord) {
+        runCatching { record.stop() }
+        runCatching { record.release() }
     }
 
     // ── Battery monitoring ────────────────────────────────────────────────────

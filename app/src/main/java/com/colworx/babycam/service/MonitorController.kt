@@ -47,11 +47,11 @@ object MonitorController {
             .apply()
     }
 
-    /** Whether monitoring should auto-resume after reboot. Defaults to true. */
+    /** Whether the app should offer to resume monitoring after reboot. */
     fun isAutoStartEnabled(context: Context): Boolean {
         return context.applicationContext
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_AUTO_START, true)
+            .getBoolean(KEY_AUTO_START, AUTO_START_DEFAULT)
     }
 
     private fun setMonitoringEnabled(context: Context, enabled: Boolean) {
@@ -62,3 +62,5 @@ object MonitorController {
             .apply()
     }
 }
+
+const val AUTO_START_DEFAULT = false

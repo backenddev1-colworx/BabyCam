@@ -6,24 +6,30 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.colworx.babycam.R
+
+const val BOOT_COMPLETED_ACTION = Intent.ACTION_BOOT_COMPLETED
+
+fun shouldOfferBootResume(
+    action: String?,
+    monitoringEnabled: Boolean,
+    autoStartEnabled: Boolean,
+): Boolean = action == BOOT_COMPLETED_ACTION && monitoringEnabled && autoStartEnabled
 
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        if (!MonitorController.isMonitoringEnabled(context)) return
-        if (!MonitorController.isAutoStartEnabled(context)) return
+        if (!shouldOfferBootResume(
+                action = intent.action,
+                monitoringEnabled = MonitorController.isMonitoringEnabled(context),
+                autoStartEnabled = MonitorController.isAutoStartEnabled(context),
+            )
+        ) return
 
-        // Android 14+ (API 34) prohibits camera/microphone foreground services
-        // from starting via BOOT_COMPLETED. Show a tap-to-resume notification instead.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            showResumeNotification(context)
-        } else {
-            MonitorController.start(context.applicationContext)
-        }
+        // Reboot never activates camera or microphone in the background. The user must open the
+        // app, pass the app lock if configured, and let normal saved-session restoration resume.
+        showResumeNotification(context)
     }
 
     private fun showResumeNotification(context: Context) {
@@ -45,7 +51,7 @@ class BootReceiver : BroadcastReceiver() {
         val notif = NotificationCompat.Builder(context, "babycam_resume")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("BabyCam paused after restart")
-            .setContentText("Tap to resume monitoring")
+            .setContentText("Tap to unlock and resume monitoring")
             .setContentIntent(pi)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

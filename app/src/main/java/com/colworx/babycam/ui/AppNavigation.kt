@@ -47,6 +47,9 @@ object Routes {
     const val SNAPSHOTS = "snapshots"
 }
 
+fun canRestoreSavedSession(lockEnabled: Boolean?, unlocked: Boolean): Boolean =
+    lockEnabled == false || lockEnabled == true && unlocked
+
 @Composable
 fun AppNavigation(startAtParentLive: Boolean = false) {
     val nav = rememberNavController()
@@ -55,15 +58,20 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
     val prefs = remember { AppPreferences(context) }
     val pinManager = remember { PinManager(context) }
     var pendingRole by remember { mutableStateOf(Role.NONE) }
-    var locked by remember { mutableStateOf(false) }
+    var lockEnabled by remember { mutableStateOf<Boolean?>(null) }
+    var unlocked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        pinManager.isEnabled.collect { enabled -> locked = enabled }
+        pinManager.isEnabled.collect { enabled ->
+            lockEnabled = enabled
+            if (!enabled) unlocked = false
+        }
     }
 
     // Cry-alert deep link: jump straight to the live view if a pairing is remembered.
     // Otherwise, resume exactly where the user left off before a hard kill (state persistence).
-    LaunchedEffect(startAtParentLive) {
+    LaunchedEffect(startAtParentLive, lockEnabled, unlocked) {
+        if (!canRestoreSavedSession(lockEnabled, unlocked)) return@LaunchedEffect
         if (startAtParentLive) {
             val savedRoom = prefs.parentRoom.first()
             if (savedRoom != null) {
@@ -107,8 +115,10 @@ fun AppNavigation(startAtParentLive: Boolean = false) {
         }
     }
 
-    if (locked) {
-        AppLockScreen(onUnlocked = { locked = false })
+    if (lockEnabled == null) return
+
+    if (lockEnabled == true && !unlocked) {
+        AppLockScreen(onUnlocked = { unlocked = true })
         return
     }
 
