@@ -18,6 +18,7 @@ class SessionControlPolicyTest {
             microphone = true,
             torch = true,
             cryDetection = true,
+            lullaby = true,
             parentCamera = true,
             parentTalk = true,
             videoSaver = true,
@@ -29,6 +30,7 @@ class SessionControlPolicyTest {
                 CONTROL_MICROPHONE,
                 CONTROL_TORCH,
                 CONTROL_CRY,
+                CONTROL_LULLABY,
                 CONTROL_PARENT_CAMERA,
                 CONTROL_VIDEO_SAVER,
             ),
@@ -44,6 +46,7 @@ class SessionControlPolicyTest {
             microphone = true,
             torch = true,
             cryDetection = true,
+            lullaby = true,
             parentCamera = true,
             parentTalk = true,
             videoSaver = true,
@@ -53,6 +56,7 @@ class SessionControlPolicyTest {
         assertFalse(result.microphone)
         assertFalse(result.torch)
         assertFalse(result.cryDetection)
+        assertFalse(result.lullaby)
         assertFalse(result.parentCamera)
         assertFalse(result.parentTalk)
         assertTrue(result.videoSaver)

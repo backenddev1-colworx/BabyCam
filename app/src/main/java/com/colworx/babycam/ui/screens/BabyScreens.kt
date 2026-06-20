@@ -136,9 +136,10 @@ fun BabyActiveScreen(onStop: () -> Unit, onSettings: () -> Unit = {}) {
     val camOn by LiveSession.babyCamEnabled
     val micOn by LiveSession.babyMicEnabled
     val cryOn by LiveSession.babyCryDetectionEnabled
+    val lullabyOn by LiveSession.babyLullabyPlaying
     val torchOn by LiveSession.babyTorchOn
     val parentSharing by LiveSession.parentCamSharing
-    val anythingActive = camOn || micOn || cryOn || torchOn || parentSharing
+    val anythingActive = camOn || micOn || cryOn || torchOn || lullabyOn || parentSharing
 
     Column(
         modifier = Modifier

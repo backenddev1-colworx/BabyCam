@@ -150,10 +150,6 @@ class BabyCamConnection(
             "answer" -> if (role == ConnRole.BABY) receiveAnswer(msg.payload)
             "ice" -> receiveIce(msg.payload)
             "switch_camera" -> if (role == ConnRole.BABY) session.switchCamera()
-            "lullaby" -> if (role == ConnRole.BABY) {
-                if (msg.payload == "stop") LullabyPlayer.stop()
-                else LullabyPlayer.play(LullabyPlayer.Sound.BELL, context.applicationContext)
-            }
             "battery" -> if (role == ConnRole.PARENT) {
                 msg.payload.toIntOrNull()?.let(onBatteryUpdate)
             }
@@ -278,6 +274,14 @@ class BabyCamConnection(
             }
             CONTROL_MICROPHONE -> session.setLocalAudioEnabled(enabled)
             CONTROL_TORCH -> controlTorch(enabled)
+            CONTROL_LULLABY -> {
+                if (enabled) {
+                    LullabyPlayer.play(LullabyPlayer.Sound.BELL, context.applicationContext)
+                } else {
+                    LullabyPlayer.stop()
+                }
+                enabled
+            }
             CONTROL_PARENT_CAMERA -> enabled
             CONTROL_VIDEO_SAVER -> {
                 if (enabled) session.changeCaptureFormat(640, 480, 15)
@@ -395,7 +399,7 @@ class BabyCamConnection(
 
     fun switchCamera() = session.switchCamera()
     fun requestRemoteCameraSwitch() = signaling.send("switch_camera", "")
-    fun sendLullaby(sound: String) = signaling.send("lullaby", sound)
+    fun sendLullaby(sound: String) = updateDesired(CONTROL_LULLABY, sound != "stop")
     fun setVideoEnabled(enabled: Boolean) = setRemoteCamera(enabled)
     fun sendBattery(pct: Int) = signaling.send("battery", pct.toString())
     fun syncCurrentBattery() {
@@ -524,6 +528,7 @@ class BabyCamConnection(
         .put(CONTROL_MICROPHONE, state.microphone)
         .put(CONTROL_TORCH, state.torch)
         .put(CONTROL_CRY, state.cryDetection)
+        .put(CONTROL_LULLABY, state.lullaby)
         .put(CONTROL_PARENT_CAMERA, state.parentCamera)
         .put(CONTROL_VIDEO_SAVER, state.videoSaver)
 
@@ -532,6 +537,7 @@ class BabyCamConnection(
         microphone = json.optBoolean(CONTROL_MICROPHONE),
         torch = json.optBoolean(CONTROL_TORCH),
         cryDetection = json.optBoolean(CONTROL_CRY),
+        lullaby = json.optBoolean(CONTROL_LULLABY),
         parentCamera = json.optBoolean(CONTROL_PARENT_CAMERA),
         videoSaver = json.optBoolean(CONTROL_VIDEO_SAVER),
     )

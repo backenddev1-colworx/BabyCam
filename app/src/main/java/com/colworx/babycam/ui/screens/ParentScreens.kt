@@ -223,11 +223,11 @@ fun ParentLiveScreen(
     val babyMicOn by LiveSession.babyMicEnabled
     val torchOn by LiveSession.babyTorchOn
 
-    var talking by remember { mutableStateOf(false) }
     var nightMode by remember { mutableStateOf(false) }
-    var bellRinging by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
     val parentSharing by LiveSession.parentSharingCamera
+    val talking by LiveSession.parentTalking
+    val bellRinging by LiveSession.babyLullabyPlaying
 
     // Persisted night-mode + capture quality so they survive leaving/reopening the live view.
     // Quality is (re)sent to the baby whenever signaling comes up, so it sticks across reconnects.
@@ -545,8 +545,7 @@ fun ParentLiveScreen(
                     icon = Icons.Outlined.RecordVoiceOver,
                     label = if (talking) "Talking" else "Talk",
                     onClick = {
-                        talking = !talking
-                        LiveSession.setTalking(talking)
+                        LiveSession.setTalking(!talking)
                     },
                     size = 52,
                     bg = if (talking) IndigoDeep else Color(0x33FFFFFF),
@@ -568,8 +567,7 @@ fun ParentLiveScreen(
                            else Icons.Outlined.Notifications,
                     label = if (bellRinging) "Bell ON" else "Ring bell",
                     onClick = {
-                        bellRinging = !bellRinging
-                        LiveSession.sendLullaby(if (bellRinging) "bell" else "stop")
+                        LiveSession.sendLullaby(if (bellRinging) "stop" else "bell")
                     },
                     bg = if (bellRinging) Color(0xFF3A2D00) else Color(0x33FFFFFF),
                     fg = if (bellRinging) Color(0xFFFFD54F) else NightText

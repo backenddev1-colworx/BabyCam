@@ -54,9 +54,11 @@ data class MonitoringSessionState(
     val babyMicEnabled: Boolean = false,
     val babyTorchOn: Boolean = false,
     val babyCryDetectionEnabled: Boolean = false,
+    val babyLullabyPlaying: Boolean = false,
     val babyVideoSaver: Boolean = false,
     val parentSharingCamera: Boolean = false,
     val parentCamSharing: Boolean = false,
+    val parentTalking: Boolean = false,
 )
 
 object MonitoringSessionDefaults {

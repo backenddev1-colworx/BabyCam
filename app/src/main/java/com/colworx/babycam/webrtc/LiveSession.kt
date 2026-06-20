@@ -41,6 +41,7 @@ object LiveSession {
 
     /** Parent-observed: whether the baby's cry detection is currently ON (synced via "cry_state"). */
     val babyCryDetectionEnabled = mutableStateOf(initialMonitoringState.babyCryDetectionEnabled)
+    val babyLullabyPlaying = mutableStateOf(initialMonitoringState.babyLullabyPlaying)
 
     /** Parent-observed: whether the baby's capture is in battery-saver (low-res) mode. */
     val babyVideoSaver = mutableStateOf(initialMonitoringState.babyVideoSaver)
@@ -50,6 +51,7 @@ object LiveSession {
 
     /** Baby-observed: whether the parent is sharing its camera (drives the PiP on the baby screen). */
     val parentCamSharing = mutableStateOf(initialMonitoringState.parentCamSharing)
+    val parentTalking = mutableStateOf(initialMonitoringState.parentTalking)
 
     fun startBaby(context: Context, room: String) {
         stop()
@@ -189,9 +191,11 @@ object LiveSession {
         babyMicEnabled.value = resetState.babyMicEnabled
         babyTorchOn.value = resetState.babyTorchOn
         babyCryDetectionEnabled.value = resetState.babyCryDetectionEnabled
+        babyLullabyPlaying.value = resetState.babyLullabyPlaying
         babyVideoSaver.value = resetState.babyVideoSaver
         parentSharingCamera.value = resetState.parentSharingCamera
         parentCamSharing.value = resetState.parentCamSharing
+        parentTalking.value = resetState.parentTalking
     }
 
     private fun applyControlState(state: SessionControlState, parent: Boolean) {
@@ -199,8 +203,10 @@ object LiveSession {
         babyMicEnabled.value = state.microphone
         babyTorchOn.value = state.torch
         babyCryDetectionEnabled.value = state.cryDetection
+        babyLullabyPlaying.value = state.lullaby
         babyVideoSaver.value = state.videoSaver
         if (parent) parentSharingCamera.value = state.parentCamera
         else parentCamSharing.value = state.parentCamera
+        if (parent) parentTalking.value = state.parentTalk
     }
 }

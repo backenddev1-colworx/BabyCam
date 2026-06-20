@@ -131,9 +131,11 @@ class MonitoringStateTest {
         assertFalse(state.babyMicEnabled)
         assertFalse(state.babyTorchOn)
         assertFalse(state.babyCryDetectionEnabled)
+        assertFalse(state.babyLullabyPlaying)
         assertFalse(state.babyVideoSaver)
         assertFalse(state.parentSharingCamera)
         assertFalse(state.parentCamSharing)
+        assertFalse(state.parentTalking)
     }
 
     @Test
@@ -144,9 +146,11 @@ class MonitoringStateTest {
         assertFalse(state.babyMicEnabled)
         assertFalse(state.babyTorchOn)
         assertFalse(state.babyCryDetectionEnabled)
+        assertFalse(state.babyLullabyPlaying)
         assertFalse(state.babyVideoSaver)
         assertFalse(state.parentSharingCamera)
         assertFalse(state.parentCamSharing)
+        assertFalse(state.parentTalking)
     }
 
     @Test
