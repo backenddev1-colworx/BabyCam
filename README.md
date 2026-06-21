@@ -27,6 +27,10 @@ Realtime TURN (1 TB/month free tier).
 - **Two-way talk** — tap to talk from the parent phone to the baby's speaker
 - **Full remote control of the baby phone** — parent can toggle the baby's camera, mic, and
   torch (flashlight), and flip front/back camera, without touching the baby phone
+- **Parent camera share preview** — when the parent shares its own camera back to the baby, the
+  parent also sees a small mirrored local preview window
+- **Live diagnostics** — the parent's live view shows an expandable diagnostics panel with
+  resolution, FPS, bitrate, packet loss, ICE path, signaling state, and quality mode
 - **Cry detection** — on-device amplitude analysis on the baby phone, fires a local alert even
   with no parent connected
 - **Lullaby / white-noise playback** — white noise, heartbeat, rain — played on the baby phone,
@@ -44,6 +48,8 @@ Realtime TURN (1 TB/month free tier).
   OFF; the parent explicitly enables them while signaling remains reachable in standby
 - **Screen-off standby** — a foreground service keeps signaling reachable; after reboot the user
   taps a notification to unlock and resume instead of silently activating camera or microphone
+- **Safe audio-route restore** — BabyCam temporarily enters communication audio mode only while
+  an actual audio feature is active, then restores the phone's prior speaker/earpiece state
 
 ## Tech stack
 
@@ -99,6 +105,8 @@ app/src/main/java/com/colworx/babycam/
 │   ├── LiveSession.kt            ← app-wide observable connection state
 │   ├── BabyCamConnection.kt      ← WebRTC ↔ MQTT signaling orchestration
 │   ├── WebRtcSession.kt          ← PeerConnection, camera/mic tracks
+│   ├── StreamDiagnostics.kt      ← parent live-view bitrate/FPS/ICE diagnostics model
+│   ├── AudioRoutingPolicy.kt     ← saves/restores the phone's original audio routing state
 │   ├── TurnConfig.kt             ← provider-agnostic TURN config (Cloudflare / Metered / coturn / STUN-only)
 │   ├── CloudflareTurnFetcher.kt  ← fetches ephemeral Cloudflare TURN credentials at session start
 │   └── Camera2TorchController.kt ← injects FLASH_MODE_TORCH into WebRTC's Camera2 repeating request
