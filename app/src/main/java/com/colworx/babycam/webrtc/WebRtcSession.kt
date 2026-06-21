@@ -18,6 +18,8 @@ import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpTransceiver
+import org.webrtc.RTCStats
+import org.webrtc.RTCStatsReport
 import org.webrtc.audio.JavaAudioDeviceModule
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
@@ -27,6 +29,8 @@ import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * Core WebRTC wrapper for BabyCam. One instance per active connection.
@@ -61,10 +65,14 @@ class WebRtcSession(
     private var audioTransceiver: RtpTransceiver? = null
     private var localAudioActive = false
     private var remoteAudioActive = false
+    private var remoteAudioTrack: AudioTrack? = null
     private val pcmFrameAccumulator = PcmFrameAccumulator()
+    private var savedAudioRouting: AudioRoutingState? = null
     var localVideoTrack: VideoTrack? = null
         private set
     var localAudioTrack: AudioTrack? = null
+        private set
+    var connectionState: PeerConnection.IceConnectionState? = null
         private set
 
     // Current capture format. Stored so a standby resume and a quality change both apply the
@@ -73,6 +81,8 @@ class WebRtcSession(
     private var capHeight = 720
     private var capFps = 30
     private var activeCameraIsFront = false
+    private var lastStatsTimestampUs = 0.0
+    private var lastInboundBytes = 0L
 
     /**
      * Google STUN + Metered TURN relay. STUN handles most NATs (direct/reflexive); TURN relays
@@ -141,12 +151,17 @@ class WebRtcSession(
                 Log.d(TAG, "onAddTrack: kind=${t?.kind()} id=${t?.id()}")
                 when (t) {
                     is VideoTrack -> listener.onRemoteVideoTrack(t)
-                    is AudioTrack -> listener.onRemoteAudioTrack(t)
+                    is AudioTrack -> {
+                        remoteAudioTrack = t
+                        t.setEnabled(remoteAudioActive)
+                        listener.onRemoteAudioTrack(t)
+                    }
                     else -> {}
                 }
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                 Log.d(TAG, "ICE connection state -> $state")
+                connectionState = state
                 listener.onConnectionStateChange(state)
             }
             override fun onSignalingChange(p0: PeerConnection.SignalingState?) {
@@ -336,7 +351,29 @@ class WebRtcSession(
 
     fun setRemoteAudioPlaybackActive(active: Boolean) {
         remoteAudioActive = active
+        remoteAudioTrack?.setEnabled(active)
         updateAudioRouting()
+    }
+
+    suspend fun loadParentDiagnostics(
+        signalingUp: Boolean,
+        connectionState: String,
+        qualityMode: String,
+    ): ParentStreamDiagnostics = suspendCancellableCoroutine { continuation ->
+        val pc = peerConnection
+        if (pc == null) {
+            continuation.resume(
+                ParentStreamDiagnostics(
+                    signalingLabel = if (signalingUp) "Up" else "Down",
+                    connectionLabel = connectionState,
+                    qualityModeLabel = qualityMode,
+                )
+            )
+            return@suspendCancellableCoroutine
+        }
+        pc.getStats { report ->
+            continuation.resume(parseDiagnosticsReport(report, signalingUp, connectionState, qualityMode))
+        }
     }
 
     fun setLocalVideoEnabled(enabled: Boolean): Boolean {
@@ -422,8 +459,23 @@ class WebRtcSession(
     private fun updateAudioRouting() {
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         if (localAudioActive || remoteAudioActive) {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.isSpeakerphoneOn = true
+            if (savedAudioRouting == null) {
+                savedAudioRouting = AudioRoutingState(
+                    mode = audioManager.mode,
+                    speakerphoneOn = audioManager.isSpeakerphoneOn,
+                    voiceCallVolume = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL),
+                )
+            }
+            val target = activeAudioRoutingTarget(
+                original = savedAudioRouting ?: return,
+                communicationMode = AudioManager.MODE_IN_COMMUNICATION,
+                maxVoiceCallVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL),
+            )
+            audioManager.mode = target.mode
+            audioManager.isSpeakerphoneOn = target.speakerphoneOn
+            if (audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) != target.voiceCallVolume) {
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target.voiceCallVolume, 0)
+            }
         } else {
             restoreAudioRouting()
         }
@@ -431,6 +483,17 @@ class WebRtcSession(
 
     private fun restoreAudioRouting() {
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val original = savedAudioRouting
+        if (original != null) {
+            val target = restoreAudioRoutingTarget(original)
+            if (audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) != target.voiceCallVolume) {
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target.voiceCallVolume, 0)
+            }
+            audioManager.isSpeakerphoneOn = target.speakerphoneOn
+            audioManager.mode = target.mode
+            savedAudioRouting = null
+            return
+        }
         audioManager.isSpeakerphoneOn = false
         audioManager.mode = AudioManager.MODE_NORMAL
     }
@@ -546,6 +609,7 @@ class WebRtcSession(
         audioTransceiver?.sender?.setTrack(null, false)
         localAudioActive = false
         remoteAudioActive = false
+        remoteAudioTrack = null
         localAudioTrack?.dispose()
         localAudioTrack = null
         videoCapturer?.dispose()
@@ -558,6 +622,87 @@ class WebRtcSession(
         eglBase.release()
         restoreAudioRouting()
     }
+
+    private fun parseDiagnosticsReport(
+        report: RTCStatsReport,
+        signalingUp: Boolean,
+        connectionState: String,
+        qualityMode: String,
+    ): ParentStreamDiagnostics {
+        val stats = report.statsMap.values
+        val inboundVideo = stats.firstOrNull { it.type == "inbound-rtp" && it.isVideoInbound() }
+        val selectedPair = stats.firstOrNull { it.type == "candidate-pair" && it.isSelectedCandidatePair() }
+        val localCandidate = selectedPair?.linkedCandidate(stats, "localCandidateId")
+        val remoteCandidate = selectedPair?.linkedCandidate(stats, "remoteCandidateId")
+
+        val width = inboundVideo?.longMember("frameWidth")
+        val height = inboundVideo?.longMember("frameHeight")
+        val fps = inboundVideo?.doubleMember("framesPerSecond")
+        val bytes = inboundVideo?.longMember("bytesReceived")
+        val packetsReceived = inboundVideo?.longMember("packetsReceived")
+        val packetsLost = inboundVideo?.longMember("packetsLost")
+        val bitrateKbps = calculateInboundBitrateKbps(bytes, inboundVideo?.timestampUs)
+        val packetLossPercent = if (packetsReceived != null && packetsLost != null && packetsReceived + packetsLost > 0) {
+            (packetsLost.toDouble() * 100.0) / (packetsReceived + packetsLost).toDouble()
+        } else {
+            null
+        }
+
+        return ParentStreamDiagnostics(
+            resolutionLabel = if (width != null && height != null) "${width}x$height" else "--",
+            fpsLabel = fps?.let { "${it.toInt()} fps" } ?: "--",
+            bitrateLabel = bitrateKbps?.let { "${it.toInt()} kbps" } ?: "--",
+            packetLossLabel = packetLossPercent?.let { String.format("%.1f%%", it) } ?: "--",
+            icePathLabel = diagnosticsIcePath(
+                localCandidateType = localCandidate?.stringMember("candidateType"),
+                remoteCandidateType = remoteCandidate?.stringMember("candidateType"),
+            ),
+            signalingLabel = if (signalingUp) "Up" else "Down",
+            connectionLabel = connectionState,
+            qualityModeLabel = qualityMode,
+        )
+    }
+
+    private fun calculateInboundBitrateKbps(bytesReceived: Long?, timestampUs: Double?): Double? {
+        if (bytesReceived == null || timestampUs == null) return null
+        if (lastStatsTimestampUs == 0.0 || timestampUs <= lastStatsTimestampUs || bytesReceived < lastInboundBytes) {
+            lastStatsTimestampUs = timestampUs
+            lastInboundBytes = bytesReceived
+            return null
+        }
+        val deltaBytes = bytesReceived - lastInboundBytes
+        val deltaSeconds = (timestampUs - lastStatsTimestampUs) / 1_000_000.0
+        lastStatsTimestampUs = timestampUs
+        lastInboundBytes = bytesReceived
+        if (deltaSeconds <= 0.0) return null
+        return (deltaBytes * 8.0) / deltaSeconds / 1000.0
+    }
+
+    private fun RTCStats.isVideoInbound(): Boolean {
+        val kind = members["kind"] as? String
+        val mediaType = members["mediaType"] as? String
+        return kind == "video" || mediaType == "video"
+    }
+
+    private fun RTCStats.isSelectedCandidatePair(): Boolean =
+        (members["selected"] as? Boolean) == true || (members["state"] as? String) == "succeeded"
+
+    private fun RTCStats.linkedCandidate(stats: Collection<RTCStats>, memberName: String): RTCStats? {
+        val candidateId = members[memberName] as? String ?: return null
+        return stats.firstOrNull { it.id == candidateId }
+    }
+
+    private fun RTCStats.longMember(name: String): Long? = when (val value = members[name]) {
+        is Number -> value.toLong()
+        else -> null
+    }
+
+    private fun RTCStats.doubleMember(name: String): Double? = when (val value = members[name]) {
+        is Number -> value.toDouble()
+        else -> null
+    }
+
+    private fun RTCStats.stringMember(name: String): String? = members[name] as? String
 
     @Synchronized
     private fun finishOffer() {

@@ -6,6 +6,8 @@ import com.colworx.babycam.media.FrameCapture
 import com.colworx.babycam.media.Snapshot
 import org.webrtc.PeerConnection
 import org.webrtc.VideoTrack
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * App-wide holder for the single active connection so Compose screens can observe live state
@@ -48,6 +50,7 @@ object LiveSession {
 
     /** Parent's own state: whether the parent is currently sharing its camera back to the baby. */
     val parentSharingCamera = mutableStateOf(initialMonitoringState.parentSharingCamera)
+    val parentDiagnostics = mutableStateOf(ParentStreamDiagnostics())
 
     /** Baby-observed: whether the parent is sharing its camera (drives the PiP on the baby screen). */
     val parentCamSharing = mutableStateOf(initialMonitoringState.parentCamSharing)
@@ -88,6 +91,7 @@ object LiveSession {
         val conn = BabyCamConnection(
             context.applicationContext, ConnRole.PARENT, room,
             onRemoteVideo = { if (generation == activeGeneration) remoteVideo.value = it },
+            onLocalVideo = { if (generation == activeGeneration) localVideo.value = it },
             onState = { if (generation == activeGeneration) connState.value = it },
             onSignalingUp = { if (generation == activeGeneration) signalingUp.value = it },
             onBatteryUpdate = { if (generation == activeGeneration) babyBattery.value = it },
@@ -156,6 +160,15 @@ object LiveSession {
     /** Baby: publish a cry alert to the paired parent. */
     fun sendCry() = connection?.sendCry() ?: Unit
 
+    suspend fun refreshParentDiagnostics(qualityMode: String) {
+        val conn = connection ?: return
+        val signaling = signalingUp.value
+        val diagnostics = withContext(Dispatchers.Default) {
+            conn.loadParentDiagnostics(signalingUp = signaling, qualityMode = qualityMode)
+        }
+        parentDiagnostics.value = diagnostics
+    }
+
     /**
      * Captures the current incoming (remote) video frame and saves it to the gallery.
      * Invokes [onResult] with true on success. The callback may run off the main thread;
@@ -196,6 +209,7 @@ object LiveSession {
         parentSharingCamera.value = resetState.parentSharingCamera
         parentCamSharing.value = resetState.parentCamSharing
         parentTalking.value = resetState.parentTalking
+        parentDiagnostics.value = ParentStreamDiagnostics()
     }
 
     private fun applyControlState(state: SessionControlState, parent: Boolean) {

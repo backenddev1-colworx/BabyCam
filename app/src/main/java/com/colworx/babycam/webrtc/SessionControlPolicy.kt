@@ -1,5 +1,7 @@
 package com.colworx.babycam.webrtc
 
+import org.json.JSONObject
+
 data class SessionControlState(
     val camera: Boolean = false,
     val microphone: Boolean = false,
@@ -148,3 +150,42 @@ const val CONTROL_LULLABY = "lullaby"
 const val CONTROL_PARENT_CAMERA = "parent_camera"
 const val CONTROL_PARENT_TALK = "parent_talk"
 const val CONTROL_VIDEO_SAVER = "video_saver"
+
+fun SessionControlState.asPayloadMap(): Map<String, Boolean> = linkedMapOf(
+    CONTROL_CAMERA to camera,
+    CONTROL_MICROPHONE to microphone,
+    CONTROL_TORCH to torch,
+    CONTROL_CRY to cryDetection,
+    CONTROL_LULLABY to lullaby,
+    CONTROL_PARENT_CAMERA to parentCamera,
+    CONTROL_PARENT_TALK to parentTalk,
+    CONTROL_VIDEO_SAVER to videoSaver,
+)
+
+fun sessionControlStateFromMap(payload: Map<String, Boolean>): SessionControlState = SessionControlState(
+    camera = payload[CONTROL_CAMERA] == true,
+    microphone = payload[CONTROL_MICROPHONE] == true,
+    torch = payload[CONTROL_TORCH] == true,
+    cryDetection = payload[CONTROL_CRY] == true,
+    lullaby = payload[CONTROL_LULLABY] == true,
+    parentCamera = payload[CONTROL_PARENT_CAMERA] == true,
+    parentTalk = payload[CONTROL_PARENT_TALK] == true,
+    videoSaver = payload[CONTROL_VIDEO_SAVER] == true,
+)
+
+fun SessionControlState.toJson(): JSONObject = JSONObject().apply {
+    asPayloadMap().forEach { (key, value) -> put(key, value) }
+}
+
+fun sessionControlStateFromJson(json: JSONObject): SessionControlState = sessionControlStateFromMap(
+    buildMap {
+        put(CONTROL_CAMERA, json.optBoolean(CONTROL_CAMERA))
+        put(CONTROL_MICROPHONE, json.optBoolean(CONTROL_MICROPHONE))
+        put(CONTROL_TORCH, json.optBoolean(CONTROL_TORCH))
+        put(CONTROL_CRY, json.optBoolean(CONTROL_CRY))
+        put(CONTROL_LULLABY, json.optBoolean(CONTROL_LULLABY))
+        put(CONTROL_PARENT_CAMERA, json.optBoolean(CONTROL_PARENT_CAMERA))
+        put(CONTROL_PARENT_TALK, json.optBoolean(CONTROL_PARENT_TALK))
+        put(CONTROL_VIDEO_SAVER, json.optBoolean(CONTROL_VIDEO_SAVER))
+    }
+)

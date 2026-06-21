@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.VideocamOff
@@ -111,6 +113,7 @@ import com.colworx.babycam.ui.theme.NightText
 import com.colworx.babycam.ui.theme.Teal
 import com.colworx.babycam.ui.theme.TealBg
 import com.colworx.babycam.webrtc.LiveSession
+import com.colworx.babycam.webrtc.ParentStreamDiagnostics
 import com.colworx.babycam.webrtc.VideoRenderer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -216,8 +219,10 @@ fun ParentLiveScreen(
     val prefs = remember { AppPreferences(context) }
     val scope = rememberCoroutineScope()
     val track by LiveSession.remoteVideo
+    val localTrack by LiveSession.localVideo
     val connState by LiveSession.connState
     val signalingUp by LiveSession.signalingUp
+    val diagnostics by LiveSession.parentDiagnostics
     val connection = LiveSession.connection
     val battery by LiveSession.babyBattery
     val babyCamOn by LiveSession.babyCamEnabled
@@ -226,6 +231,7 @@ fun ParentLiveScreen(
 
     var nightMode by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    var showDiagnosticsDialog by remember { mutableStateOf(false) }
     val parentSharing by LiveSession.parentSharingCamera
     val talking by LiveSession.parentTalking
     val bellRinging by LiveSession.babyLullabyPlaying
@@ -237,6 +243,15 @@ fun ParentLiveScreen(
     val savedQuality by prefs.videoQuality.collectAsState(initial = "HIGH")
     LaunchedEffect(signalingUp, savedQuality) {
         if (signalingUp) LiveSession.setRemoteQuality(savedQuality == "SAVER")
+    }
+    LaunchedEffect(connection, signalingUp, savedQuality) {
+        if (connection == null) return@LaunchedEffect
+        while (true) {
+            LiveSession.refreshParentDiagnostics(
+                qualityMode = if (savedQuality == "SAVER") "Saver" else "High",
+            )
+            delay(2000L)
+        }
     }
 
     // Pinch-to-zoom on the live feed: scale 1x-4x, drag-to-pan while zoomed in, double-tap to
@@ -306,6 +321,13 @@ fun ParentLiveScreen(
                     Text("Keep watching")
                 }
             }
+        )
+    }
+
+    if (showDiagnosticsDialog) {
+        DiagnosticsDialog(
+            diagnostics = diagnostics,
+            onDismiss = { showDiagnosticsDialog = false },
         )
     }
 
@@ -396,6 +418,26 @@ fun ParentLiveScreen(
             }
         }
 
+        if (connection != null && parentSharing && localTrack != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 16.dp, bottom = 128.dp)
+                    .size(width = 112.dp, height = 152.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xDD0D1022))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(18.dp))
+            ) {
+                VideoRenderer(
+                    track = localTrack,
+                    eglContext = connection.eglContext,
+                    modifier = Modifier.fillMaxSize(),
+                    mirror = true,
+                )
+            }
+        }
+
         // ── Top status bar ────────────────────────────────────────────
         Row(
             modifier = Modifier
@@ -427,6 +469,12 @@ fun ParentLiveScreen(
                     SignalQuality.RECONNECTING -> Color(0xFFFFA726)
                     SignalQuality.OFFLINE -> Color(0xFFFF6B6B)
                 }
+            )
+            StatusPill(
+                text = diagnostics.compactSummary(),
+                bg = Color(0x221E88E5),
+                fg = Color(0xFF90CAF9),
+                modifier = Modifier.clickable { showDiagnosticsDialog = true }
             )
             Icon(
                 imageVector = Icons.Outlined.BatteryStd,
@@ -604,6 +652,54 @@ fun ParentLiveScreen(
 
             Spacer(Modifier.height(4.dp))
         }
+    }
+}
+
+@Composable
+private fun DiagnosticsDialog(
+    diagnostics: ParentStreamDiagnostics,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Outlined.Speed, contentDescription = null, tint = Color(0xFF90CAF9))
+                Text("Live diagnostics")
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DiagnosticsRow("Resolution", diagnostics.resolutionLabel)
+                DiagnosticsRow("FPS", diagnostics.fpsLabel)
+                DiagnosticsRow("Bitrate", diagnostics.bitrateLabel)
+                DiagnosticsRow("Packet loss", diagnostics.packetLossLabel)
+                DiagnosticsRow("ICE path", diagnostics.icePathLabel)
+                DiagnosticsRow("Signaling", diagnostics.signalingLabel)
+                DiagnosticsRow("Connection", diagnostics.connectionLabel)
+                DiagnosticsRow("Quality mode", diagnostics.qualityModeLabel)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
+}
+
+@Composable
+private fun DiagnosticsRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = label, color = Muted, style = MaterialTheme.typography.bodyMedium)
+        Text(text = value, color = Color.White, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

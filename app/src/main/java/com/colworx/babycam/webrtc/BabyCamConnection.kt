@@ -269,6 +269,7 @@ class BabyCamConnection(
             onSuccess = {
                 if (stopped.get() || currentSyncId != syncId) return@setRemoteDescription
                 session.attachParentCamera(useFront = true)
+                session.localVideoTrack?.let(onLocalVideo)
                 session.createAnswer(
                     onCreated = { sdp ->
                         if (!stopped.get() && currentSyncId == syncId) {
@@ -389,7 +390,7 @@ class BabyCamConnection(
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         if (json.optString("syncId") != currentSyncId) return
         acceptSessionReady(json.optString("syncId"))
-        actualState = stateFromJson(json)
+        actualState = sessionControlStateFromJson(json)
         session.setRemoteAudioPlaybackActive(actualState.microphone)
         onTorchState(actualState.torch)
         onControlState(actualState)
@@ -411,7 +412,7 @@ class BabyCamConnection(
 
     private fun sendStateSnapshot() {
         val syncId = currentSyncId ?: return
-        signaling.send("state_snapshot", stateToJson(actualState).put("syncId", syncId).toString())
+        signaling.send("state_snapshot", actualState.toJson().put("syncId", syncId).toString())
     }
 
     private fun applyFailSafe(reason: String) {
@@ -492,6 +493,15 @@ class BabyCamConnection(
         desiredState = desiredState.withControl(name, enabled)
         sendControl(name, enabled)
     }
+
+    suspend fun loadParentDiagnostics(
+        signalingUp: Boolean,
+        qualityMode: String,
+    ): ParentStreamDiagnostics = session.loadParentDiagnostics(
+        signalingUp = signalingUp,
+        connectionState = actualConnectionLabel(),
+        qualityMode = qualityMode,
+    )
 
     fun stop() {
         if (!stopped.compareAndSet(false, true)) return
@@ -614,24 +624,10 @@ class BabyCamConnection(
         return if (syncId.isBlank() || sdp.isBlank()) null else syncId to sdp
     }
 
-    private fun stateToJson(state: SessionControlState) = JSONObject()
-        .put(CONTROL_CAMERA, state.camera)
-        .put(CONTROL_MICROPHONE, state.microphone)
-        .put(CONTROL_TORCH, state.torch)
-        .put(CONTROL_CRY, state.cryDetection)
-        .put(CONTROL_LULLABY, state.lullaby)
-        .put(CONTROL_PARENT_CAMERA, state.parentCamera)
-        .put(CONTROL_VIDEO_SAVER, state.videoSaver)
-
-    private fun stateFromJson(json: JSONObject) = SessionControlState(
-        camera = json.optBoolean(CONTROL_CAMERA),
-        microphone = json.optBoolean(CONTROL_MICROPHONE),
-        torch = json.optBoolean(CONTROL_TORCH),
-        cryDetection = json.optBoolean(CONTROL_CRY),
-        lullaby = json.optBoolean(CONTROL_LULLABY),
-        parentCamera = json.optBoolean(CONTROL_PARENT_CAMERA),
-        videoSaver = json.optBoolean(CONTROL_VIDEO_SAVER),
-    )
+    private fun actualConnectionLabel(): String = when (val state = session.connectionState) {
+        null -> "Connecting"
+        else -> state.name.lowercase().replaceFirstChar(Char::uppercase)
+    }
 
     companion object {
         private const val TAG = "BabyCam"

@@ -21,6 +21,11 @@ the owner's final step.
 - [x] Baby UI now receives every accepted control result, so local preview and parent PiP follow actual state
 - [x] Settings has a visible back action and handles the Android back gesture/button
 - [x] Rear-camera torch is applied through the active WebRTC Camera2 capture request
+- [x] Parent live view now shows the parent's own shared camera in a small mirrored preview window
+- [x] Parent live view now exposes compact video/network diagnostics with an expandable details panel
+- [x] Parent-talk and mic-off media paths hardened with receiver-side audio gating and restored talk routing volume
+- [x] Audio routing now restores the phone's original speaker/earpiece/media state after BabyCam audio stops
+- [x] Battery-first optimization policy kept for live-session diagnostics and media-control behavior
 - [x] Unit tests, lint, Kotlin compilation, and debug APK build completed successfully
 - [x] Debug hardening applied in the `main` working tree; physical devices kept disconnected
 
@@ -112,6 +117,27 @@ impact-per-effort:
 - [ ] **Trust circle (multi-viewer)** — multiple parents/relatives view simultaneously.
       🟡 Architecture change — current design is 1-to-1 pairing; needs multi-peer signaling.
 - [ ] **Cloud storage** — off-device clip backup. 🔴 Costs money — defer until ads/revenue exist.
+
+### Recording storage strategy (decided 2026-06-21) — staged, owner pays ₹0
+
+Where recorded clips live. Build in this order so the owner never pays for storage until revenue exists.
+No server gives truly-free unlimited video storage; the free paths push cost onto the device or the
+user's own cloud account.
+
+- [ ] **Stage 1 — Local device storage (launch default).** Clips saved to the baby phone via
+      `MediaStore`/`MediaRecorder`; parent shares via the Android share sheet. 🟢 Free forever, zero
+      backend. Limit = baby phone's free space. This is what Alfred's free tier effectively does.
+- [ ] **Stage 2 — User's own Google Drive (free cloud, owner pays nothing).** User connects their
+      Google account (Google Sign-In + Drive API); clips upload to *their* 15 GB free Drive, then the
+      local copy is deleted. 1000 users = 1000 separate free Drives = owner cost ₹0. Most natural
+      "free cloud backup" for a consumer app.
+- [ ] **Stage 3 (alt) — Telegram Bot API as free backend store.** A private bot uploads each clip to a
+      Telegram channel (2 GB/clip, no total cap, owner cost ₹0 — Telegram hosts it). Unlimited free
+      "server" jugaad many indie apps use; less natural UX than Drive but no per-user sign-in.
+- [ ] **Stage 4 — Paid object storage (only once ad revenue exists).** Cheapest first:
+      **Cloudflare R2** ($0.015/GB, account already exists) or Backblaze B2 ($0.006/GB). Only if the app
+      must own the clips (e.g. premium tier). Firebase/Supabase free tiers (5 GB / 1 GB) are too small
+      for 1000 users — skip.
 
 ## P0: Privacy And Parent Control
 

@@ -155,4 +155,30 @@ class SessionControlPolicyTest {
         assertFalse(canEnableTorch(isFrontCamera = false, cameraStandby = true, sessionAvailable = true))
         assertFalse(canEnableTorch(isFrontCamera = false, cameraStandby = false, sessionAvailable = false))
     }
+
+    @Test
+    fun sessionControlState_jsonRoundTrip_preservesParentTalk() {
+        val state = SessionControlState(
+            camera = true,
+            microphone = true,
+            torch = true,
+            cryDetection = true,
+            lullaby = true,
+            parentCamera = true,
+            parentTalk = true,
+            videoSaver = true,
+        )
+
+        val restored = sessionControlStateFromMap(state.asPayloadMap())
+
+        assertEquals(state, restored)
+    }
+
+    @Test
+    fun diagnosticsIcePath_reportsRelayWhenAnyCandidateRelays() {
+        assertEquals("Relay", diagnosticsIcePath(localCandidateType = "relay", remoteCandidateType = "srflx"))
+        assertEquals("Relay", diagnosticsIcePath(localCandidateType = "host", remoteCandidateType = "relay"))
+        assertEquals("Direct", diagnosticsIcePath(localCandidateType = "host", remoteCandidateType = "srflx"))
+        assertEquals("Unknown", diagnosticsIcePath(localCandidateType = null, remoteCandidateType = null))
+    }
 }
