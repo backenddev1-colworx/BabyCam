@@ -267,17 +267,23 @@ class BabyCamConnection(
         session.setRemoteDescription(
             SessionDescription(SessionDescription.Type.OFFER, envelope.second),
             onSuccess = {
-                if (stopped.get() || currentSyncId != syncId) return@setRemoteDescription
-                session.attachParentCamera(useFront = true)
-                session.localVideoTrack?.let(onLocalVideo)
-                session.createAnswer(
-                    onCreated = { sdp ->
-                        if (!stopped.get() && currentSyncId == syncId) {
-                            signaling.send("answer", sdpEnvelope(syncId, sdp.description))
-                            replayDesiredState()
-                        }
-                    },
-                )
+                scope.launch {
+                    controlMutex.withLock {
+                        if (stopped.get() || currentSyncId != syncId) return@withLock
+                        session.attachParentCamera(useFront = true)
+                        session.localVideoTrack?.let(onLocalVideo)
+                        session.setRemoteAudioPlaybackActive(desiredState.microphone)
+                        session.setLocalAudioEnabled(desiredState.parentTalk)
+                        session.createAnswer(
+                            onCreated = { sdp ->
+                                if (!stopped.get() && currentSyncId == syncId) {
+                                    signaling.send("answer", sdpEnvelope(syncId, sdp.description))
+                                    replayDesiredState()
+                                }
+                            },
+                        )
+                    }
+                }
             },
         )
     }
@@ -314,7 +320,11 @@ class BabyCamConnection(
 
                 val actual = when (name) {
                     CONTROL_CAMERA -> session.setCameraStandby(!enabled)
-                    CONTROL_MICROPHONE -> setBabyMicrophone(enabled)
+                    CONTROL_MICROPHONE -> {
+                        val microphoneActual = setBabyMicrophone(enabled)
+                        requestBabyOffer()
+                        microphoneActual
+                    }
                     CONTROL_TORCH -> {
                         val torchActual = controlTorch(enabled)
                         maintainTorch(torchActual)
@@ -331,6 +341,7 @@ class BabyCamConnection(
                     CONTROL_PARENT_CAMERA -> enabled
                     CONTROL_PARENT_TALK -> {
                         session.setRemoteAudioPlaybackActive(enabled)
+                        requestBabyOffer()
                         enabled
                     }
                     CONTROL_VIDEO_SAVER -> {

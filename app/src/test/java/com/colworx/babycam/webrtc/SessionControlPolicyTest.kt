@@ -181,4 +181,16 @@ class SessionControlPolicyTest {
         assertEquals("Direct", diagnosticsIcePath(localCandidateType = "host", remoteCandidateType = "srflx"))
         assertEquals("Unknown", diagnosticsIcePath(localCandidateType = null, remoteCandidateType = null))
     }
+
+    @Test
+    fun desiredAudioNegotiationDirection_keepsDefaultMicOffWithoutBlockingReceive() {
+        assertEquals(
+            AudioNegotiationDirection.RECV_ONLY,
+            desiredAudioNegotiationDirection(localSending = false),
+        )
+        assertEquals(
+            AudioNegotiationDirection.SEND_RECV,
+            desiredAudioNegotiationDirection(localSending = true),
+        )
+    }
 }

@@ -63,6 +63,19 @@ the owner's final step.
 - [x] Both devices returned to camera, microphone, cry detection, torch, and sharing OFF
 - [x] No crash, ANR, or torch-controller error appeared during this verification
 
+## 2026-06-21 Emulator End-to-End Verification
+
+- [x] Booted two Android emulators, paired BABY (`emulator-5554`) with PARENT (`emulator-5556`), and completed the onboarding flow end to end
+- [x] Verified default standby state before controls: baby UI showed `Camera OFF`, `Mic OFF`, and `Cry OFF`
+- [x] Verified parent Camera ON starts baby capture and parent receives live frames with real-time diagnostics (`320x180 -> 1280x720`, `~6-10 fps`, relay/direct candidate changes)
+- [x] Verified parent `Share Cam` starts parent self-preview and baby receives the `Parent` PiP window
+- [x] Verified baby Wi-Fi drop and recovery re-subscribes signaling, re-sends ICE, and restores the live session without a crash
+- [x] Fix default-OFF audio privacy leak on baby side
+      Result: audio transceiver now negotiates `RECV_ONLY` by default, and the local mic sender is attached only after an explicit ON command
+      Verification: 2026-06-21 emulator re-test paired BABY (`emulator-5554`) with PARENT (`emulator-5556`), reached parent live view without crash, and baby logs no longer showed `WebRtcAudioRecordExternal: startRecording` during the default `Mic OFF` startup path
+- [ ] Follow-up: re-run `Talk`, `Torch`, `Snapshot`, and physical audio-route verification on real phones
+      Reason: emulators cannot validate torch hardware, acoustic routing, or actual speaker/mic behavior with confidence
+
 ## Deferred Public Release Work
 
 - [ ] Replace four-digit pairing security before any public release

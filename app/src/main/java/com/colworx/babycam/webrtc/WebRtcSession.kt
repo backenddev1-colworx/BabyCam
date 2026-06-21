@@ -280,13 +280,14 @@ class WebRtcSession(
 
     /**
      * Negotiates an audio m-line without opening microphone hardware. The local source is attached
-     * only by [setLocalAudioEnabled], so default-OFF is a real capture-off state.
+     * only by [setLocalAudioEnabled], so default-OFF is a real capture-off state while each side
+     * can still receive audio later without re-creating the transceiver.
      */
     fun startAudio() {
         if (audioTransceiver != null) return
         audioTransceiver = peerConnection?.addTransceiver(
             MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV),
+            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
         )
     }
 
@@ -299,6 +300,7 @@ class WebRtcSession(
             audioTransceiver = transceiver
             val hasAttachedTrack = localAudioTrack != null
             if (!shouldMutateAudioSender(enabled, hasAttachedTrack)) {
+                syncAudioTransceiverDirection(transceiver)
                 return@safeMediaMutation localAudioTrack?.enabled() == true
             }
             if (!enabled) {
@@ -311,6 +313,7 @@ class WebRtcSession(
                 audioSource?.dispose()
                 audioSource = null
                 localAudioActive = false
+                syncAudioTransceiverDirection(transceiver)
                 updateAudioRouting()
                 return@safeMediaMutation false
             }
@@ -326,6 +329,7 @@ class WebRtcSession(
             }
             localAudioTrack = track
             localAudioActive = true
+            syncAudioTransceiverDirection(transceiver)
             updateAudioRouting()
             true
         }
@@ -346,6 +350,7 @@ class WebRtcSession(
         audioSource?.dispose()
         audioSource = null
         localAudioActive = false
+        syncAudioTransceiverDirection(transceiver)
         updateAudioRouting()
     }
 
@@ -353,6 +358,16 @@ class WebRtcSession(
         remoteAudioActive = active
         remoteAudioTrack?.setEnabled(active)
         updateAudioRouting()
+    }
+
+    private fun syncAudioTransceiverDirection(transceiver: RtpTransceiver) {
+        if (transceiver.isStopped) return
+        val desired = when (desiredAudioNegotiationDirection(localSending = localAudioActive)) {
+            AudioNegotiationDirection.RECV_ONLY -> RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+            AudioNegotiationDirection.SEND_RECV -> RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+        }
+        runCatching { transceiver.setDirection(desired) }
+            .onFailure { Log.w(TAG, "setDirection failed: ${it.message}") }
     }
 
     suspend fun loadParentDiagnostics(

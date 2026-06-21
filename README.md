@@ -46,6 +46,8 @@ Realtime TURN (1 TB/month free tier).
 - **4-digit pairing code** — no QR scanner, no account; baby shows a code, parent types it in
 - **Parent-authoritative privacy** — camera, microphone, cry detection, torch, and playback start
   OFF; the parent explicitly enables them while signaling remains reachable in standby
+- **Mic hardware stays cold by default** — the baby-side audio sender is negotiated in
+  receive-only standby and the microphone track is attached only after an explicit parent enable
 - **Screen-off standby** — a foreground service keeps signaling reachable; after reboot the user
   taps a notification to unlock and resume instead of silently activating camera or microphone
 - **Safe audio-route restore** — BabyCam temporarily enters communication audio mode only while

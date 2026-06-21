@@ -46,6 +46,14 @@ data class SessionControlState(
     }
 }
 
+enum class AudioNegotiationDirection {
+    RECV_ONLY,
+    SEND_RECV,
+}
+
+fun desiredAudioNegotiationDirection(localSending: Boolean): AudioNegotiationDirection =
+    if (localSending) AudioNegotiationDirection.SEND_RECV else AudioNegotiationDirection.RECV_ONLY
+
 class SessionSyncGate {
     private var acceptedId: String? = null
 
